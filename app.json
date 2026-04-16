@@ -23,7 +23,11 @@
         "backgroundColor": "#0f172a"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.diego.treinodieta"
+      "package": "com.diego.treinodieta",
+      "permissions": [
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -47,6 +51,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "baf0da1c-34c1-4e97-a621-96c2146928ae"
+      }
+    },
+    "owner": "damorimsantos96s-organization"
   }
 }
