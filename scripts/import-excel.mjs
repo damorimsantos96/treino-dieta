@@ -19,7 +19,8 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const XLSX_PATH = resolve(__dirname, "../../Dieta e Treino.xlsx");
-const USER_EMAIL = "d.amorim.santos96@gmail.com"; // user to import data for
+const USER_EMAIL = process.env.USER_EMAIL;
+if (!USER_EMAIL) throw new Error("Set USER_EMAIL in scripts/.env before running.");
 
 const supabase = createClient(
   process.env.SUPABASE_URL,

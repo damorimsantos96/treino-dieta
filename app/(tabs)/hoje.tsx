@@ -10,6 +10,7 @@ import { router } from "expo-router";
 import { format, isToday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useDailyLog } from "@/hooks/useDailyLog";
+import { useUserMetrics } from "@/hooks/useUserProfile";
 import { computeDailyCalculations, formatWater, formatDuration } from "@/utils/calculations";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { ProgressBar } from "@/components/ui/ProgressBar";
@@ -19,9 +20,10 @@ const today = new Date();
 
 export default function HojeScreen() {
   const { data: log, isLoading, refetch, isRefetching } = useDailyLog(today);
+  const userMetrics = useUserMetrics();
 
   const calc = log
-    ? computeDailyCalculations(log, today)
+    ? computeDailyCalculations(log, today, userMetrics)
     : null;
 
   const surplus = log?.surplus_deficit_kcal ?? 0;

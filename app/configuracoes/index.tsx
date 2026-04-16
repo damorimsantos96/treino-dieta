@@ -62,7 +62,7 @@ function SettingsRow({
 }
 
 export default function ConfiguracoesScreen() {
-  const { signOut } = useAuthStore();
+  const { signOut, user } = useAuthStore();
   const { isAvailable, isEnabled, enableBiometrics, disableBiometrics } = useBiometrics();
   const [whoopSync, setWhoopSync] = useState<SyncState>("idle");
   const [garminSync, setGarminSync] = useState<SyncState>("idle");
@@ -234,7 +234,7 @@ export default function ConfiguracoesScreen() {
       <SettingsRow
         icon="🚪"
         label="Sair da conta"
-        sub="d.amorim.santos96@gmail.com"
+        sub={user?.email ?? ""}
         action={handleSignOut}
         actionLabel="Sair"
         actionColor="text-red-400"

@@ -12,6 +12,7 @@ import { subDays, subMonths, format, parseISO, eachWeekOfInterval, startOfWeek, 
 import { ptBR } from "date-fns/locale";
 import { getDailyLogs, getRunSessions } from "@/lib/api";
 import { computeDailyCalculations } from "@/utils/calculations";
+import { useUserMetrics } from "@/hooks/useUserProfile";
 import { DailyLog } from "@/types";
 import { Card } from "@/components/ui/Card";
 
@@ -151,6 +152,7 @@ export default function AnalisesScreen() {
     queryFn: () => getRunSessions(from, new Date(), 500),
   });
 
+  const userMetrics = useUserMetrics();
   const isLoading = loadingLogs || loadingRuns;
 
   // Weight trend (most recent first → reverse for chart)
@@ -175,7 +177,7 @@ export default function AnalisesScreen() {
     .reverse()
     .map((l) => ({
       label: l.date,
-      value: computeDailyCalculations(l, parseISO(l.date)).tdee_kcal,
+      value: computeDailyCalculations(l, parseISO(l.date), userMetrics).tdee_kcal,
     }));
 
   const avgTdee =
