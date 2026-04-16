@@ -11,7 +11,7 @@
  */
 
 import "dotenv/config";
-import * as XLSX from "xlsx";
+import XLSX from "xlsx";
 import { createClient } from "@supabase/supabase-js";
 import { format, parse, isValid } from "date-fns";
 import { resolve, dirname } from "path";
@@ -244,23 +244,46 @@ async function importCorridasSheet(ws, userId) {
 
 async function importPRSheet(ws, userId) {
   console.log("\n🏆 Importing PR attempts (Tentativas PR sheet)...");
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  // Actual columns: A=Data, B=Movimento, C=Score, D=Tipo
+  // Use header:1 with raw values, but access formatted strings (w) via cell refs
 
+  const range = XLSX.utils.decode_range(ws["!ref"]);
   let imported = 0;
 
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    if (!row[0] || !row[1]) continue;
+  for (let r = range.s.r + 1; r <= range.e.r; r++) {
+    const dateCell   = ws[XLSX.utils.encode_cell({ r, c: 0 })];
+    const nameCell   = ws[XLSX.utils.encode_cell({ r, c: 1 })];
+    const scoreCell  = ws[XLSX.utils.encode_cell({ r, c: 2 })];
+    const tipoCell   = ws[XLSX.utils.encode_cell({ r, c: 3 })];
 
-    const movementName = String(row[0]).trim();
-    const rawDate = row[1];
-    const dateStr = excelDateToISO(rawDate);
+    if (!dateCell || !nameCell || !scoreCell) continue;
+
+    const dateStr = excelDateToISO(dateCell.v);
     if (!dateStr) continue;
 
-    const rawValue = row[2];
-    if (!rawValue) continue;
+    const movementName = String(nameCell.v).trim();
+    if (!movementName) continue;
 
-    // Try to find or create movement
+    const tipo = tipoCell?.v ? String(tipoCell.v).trim() : "Tempo";
+    const isTempo = tipo.toLowerCase().includes("tempo");
+
+    // For time cells, Excel stores as fraction of day but formats as mm:ss
+    // Use the formatted string (w) to get the display value like "6:09"
+    let value;
+    if (isTempo && scoreCell.w) {
+      // Parse formatted string "6:09" or "12:34" → seconds
+      const parts = String(scoreCell.w).split(":").map(Number);
+      if (parts.length === 2) value = parts[0] * 60 + parts[1];
+      else if (parts.length === 3) value = parts[0] * 3600 + parts[1] * 60 + parts[2];
+    } else {
+      value = toNum(scoreCell.v);
+    }
+    if (!value) continue;
+
+    const unit = isTempo ? "time_sec" : "reps";
+    const lowerIsBetter = isTempo;
+
+    // Find or create movement
     let { data: movement } = await supabase
       .from("pr_movements")
       .select("id, unit, lower_is_better")
@@ -271,32 +294,21 @@ async function importPRSheet(ws, userId) {
     if (!movement) {
       const { data: newMov, error } = await supabase
         .from("pr_movements")
-        .insert({
-          user_id: userId,
-          name: movementName,
-          unit: "time_sec",
-          category: "CrossFit",
-          lower_is_better: true,
-        })
+        .insert({ user_id: userId, name: movementName, unit, category: "CrossFit", lower_is_better: lowerIsBetter })
         .select()
         .single();
-      if (error) continue;
+      if (error) { console.error("  ✗ create movement:", error.message); continue; }
       movement = newMov;
     }
 
-    // Parse value: try as time string first, then number
-    let value = timeToSeconds(rawValue);
-    if (!value) value = toNum(rawValue);
-    if (!value) continue;
-
-    await supabase.from("pr_attempts").insert({
+    const { error } = await supabase.from("pr_attempts").insert({
       user_id: userId,
       movement_id: movement.id,
       date: dateStr,
       value,
-      notes: row[3] ? String(row[3]) : null,
-      is_pr: false, // will be recalculated by app
+      is_pr: false,
     });
+    if (error) { console.error("  ✗ insert attempt:", error.message); continue; }
 
     imported++;
   }
