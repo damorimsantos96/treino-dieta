@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "doctor": "npx expo-doctor",
     "audit:app": "npm audit --omit=dev",
+    "check:supabase": "node scripts/check-supabase-config.mjs",
     "check": "npm run typecheck && npm run doctor && npm run audit:app"
   },
   "dependencies": {

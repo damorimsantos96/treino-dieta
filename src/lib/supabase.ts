@@ -6,13 +6,29 @@ function normalizeSupabaseUrl(value: string | undefined): string {
   const raw = value?.trim().replace(/\/+$/, "");
   if (!raw) throw new Error("EXPO_PUBLIC_SUPABASE_URL não configurada.");
 
-  if (/^https?:\/\//.test(raw)) return raw;
-  if (/^[a-z0-9]{20}$/.test(raw)) return `https://${raw}.supabase.co`;
-  if (/^[a-z0-9.-]+\.supabase\.co$/.test(raw)) return `https://${raw}`;
+  const normalized = (() => {
+    if (/^https?:\/\//.test(raw)) return raw;
+    if (/^[a-z0-9]{20}$/.test(raw)) return `https://${raw}.supabase.co`;
+    if (/^[a-z0-9.-]+\.supabase\.co$/.test(raw)) return `https://${raw}`;
+    return null;
+  })();
 
-  throw new Error(
-    "EXPO_PUBLIC_SUPABASE_URL inválida. Use https://<project-ref>.supabase.co"
-  );
+  if (!normalized) {
+    throw new Error(
+      "EXPO_PUBLIC_SUPABASE_URL inválida. Use https://<project-ref>.supabase.co"
+    );
+  }
+
+  const parsed = new URL(normalized);
+  const isLocalhost = ["localhost", "127.0.0.1"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !isLocalhost) {
+    throw new Error("EXPO_PUBLIC_SUPABASE_URL deve usar https em produção.");
+  }
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw new Error("EXPO_PUBLIC_SUPABASE_URL deve conter apenas a origem.");
+  }
+
+  return parsed.origin;
 }
 
 function getRequiredEnv(value: string | undefined, name: string): string {
@@ -24,6 +40,7 @@ function getRequiredEnv(value: string | undefined, name: string): string {
 export const supabaseUrl = normalizeSupabaseUrl(
   process.env.EXPO_PUBLIC_SUPABASE_URL
 );
+export const supabaseHost = new URL(supabaseUrl).host;
 const supabaseAnonKey = getRequiredEnv(
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
   "EXPO_PUBLIC_SUPABASE_ANON_KEY"

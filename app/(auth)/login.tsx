@@ -13,12 +13,18 @@ import {
 import { router, useFocusEffect } from "expo-router";
 import { useAuthStore } from "@/stores/auth";
 import { useBiometrics } from "@/hooks/useBiometrics";
+import {
+  getLoginErrorDetails,
+  getLoginErrorMessage,
+} from "@/utils/authErrors";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [errorDetails, setErrorDetails] = useState("");
   const { signIn } = useAuthStore();
   const { isAvailable, isEnabled, authenticate } = useBiometrics();
 
@@ -35,15 +41,22 @@ export default function LoginScreen() {
 
   async function handleLogin() {
     if (!email || !password) {
-      Alert.alert("Atenção", "Preencha email e senha.");
+      const message = "Preencha email e senha.";
+      setErrorMessage(message);
+      setErrorDetails("");
+      Alert.alert("Atenção", message);
       return;
     }
     setLoading(true);
+    setErrorMessage("");
+    setErrorDetails("");
     try {
       await signIn(email.trim().toLowerCase(), password);
       router.replace("/(tabs)/hoje");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Tente novamente.";
+      const msg = getLoginErrorMessage(err);
+      setErrorMessage(msg);
+      setErrorDetails(getLoginErrorDetails(err));
       Alert.alert("Erro ao entrar", msg);
     } finally {
       setLoading(false);
@@ -117,7 +130,11 @@ export default function LoginScreen() {
                 keyboardType="email-address"
                 autoComplete="email"
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(value) => {
+                  setEmail(value);
+                  setErrorMessage("");
+                  setErrorDetails("");
+                }}
                 onSubmitEditing={handleLogin}
               />
             </View>
@@ -144,7 +161,11 @@ export default function LoginScreen() {
                   secureTextEntry={!showPass}
                   autoComplete="current-password"
                   value={password}
-                  onChangeText={setPassword}
+                  onChangeText={(value) => {
+                    setPassword(value);
+                    setErrorMessage("");
+                    setErrorDetails("");
+                  }}
                   onSubmitEditing={handleLogin}
                 />
                 <Pressable
@@ -180,6 +201,35 @@ export default function LoginScreen() {
               </Text>
             )}
           </TouchableOpacity>
+
+          {errorMessage ? (
+            <View
+              style={{
+                marginTop: 16,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: "#ef444455",
+                backgroundColor: "#ef44441a",
+                padding: 12,
+              }}
+            >
+              <Text style={{ color: "#fecaca", fontSize: 13, lineHeight: 18 }}>
+                {errorMessage}
+              </Text>
+              {errorDetails ? (
+                <Text
+                  style={{
+                    color: "#fca5a5",
+                    fontSize: 11,
+                    lineHeight: 16,
+                    marginTop: 6,
+                  }}
+                >
+                  {errorDetails}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
 
           {/* Biometric */}
           {isAvailable && isEnabled && (
