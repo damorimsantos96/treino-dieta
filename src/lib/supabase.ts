@@ -2,8 +2,32 @@ import { createClient } from "@supabase/supabase-js";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+function normalizeSupabaseUrl(value: string | undefined): string {
+  const raw = value?.trim().replace(/\/+$/, "");
+  if (!raw) throw new Error("EXPO_PUBLIC_SUPABASE_URL não configurada.");
+
+  if (/^https?:\/\//.test(raw)) return raw;
+  if (/^[a-z0-9]{20}$/.test(raw)) return `https://${raw}.supabase.co`;
+  if (/^[a-z0-9.-]+\.supabase\.co$/.test(raw)) return `https://${raw}`;
+
+  throw new Error(
+    "EXPO_PUBLIC_SUPABASE_URL inválida. Use https://<project-ref>.supabase.co"
+  );
+}
+
+function getRequiredEnv(value: string | undefined, name: string): string {
+  const raw = value?.trim();
+  if (!raw) throw new Error(`${name} não configurada.`);
+  return raw;
+}
+
+export const supabaseUrl = normalizeSupabaseUrl(
+  process.env.EXPO_PUBLIC_SUPABASE_URL
+);
+const supabaseAnonKey = getRequiredEnv(
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+  "EXPO_PUBLIC_SUPABASE_ANON_KEY"
+);
 
 const ExpoSecureStoreAdapter = {
   getItem: (key: string) => {
