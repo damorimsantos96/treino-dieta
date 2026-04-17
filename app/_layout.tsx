@@ -30,7 +30,7 @@ export default function RootLayout() {
     );
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [setSession]);
 
   return (
     <QueryClientProvider client={queryClient}>

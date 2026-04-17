@@ -49,6 +49,11 @@ export interface DailyLog {
   // Manual input
   surplus_deficit_kcal: number | null;
 
+  // Nutrition consumed (manual)
+  protein_g: number | null;
+  carbs_g: number | null;
+  water_consumed_ml: number | null;
+
   // Whoop (auto-filled)
   whoop_strain: number | null;
   whoop_recovery: number | null;

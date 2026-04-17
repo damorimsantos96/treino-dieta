@@ -10,13 +10,13 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  FlatList,
 } from "react-native";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { getPRMovements, getPRAttempts, createPRMovement, createPRAttempt } from "@/lib/api";
 import { PRMovement, PRAttempt, PRUnit } from "@/types";
+import { Ionicons } from "@expo/vector-icons";
 
 const UNIT_LABELS: Record<PRUnit, string> = {
   time_sec: "Tempo (seg)",
@@ -64,28 +64,35 @@ function MovementCard({
 }) {
   return (
     <TouchableOpacity
-      className="bg-surface-800 rounded-2xl p-4 mb-3"
+      className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 mb-3"
       onPress={() => onAddAttempt(movement)}
     >
       <View className="flex-row justify-between items-start">
         <View className="flex-1">
           <Text className="text-white font-bold text-base">{movement.name}</Text>
-          <Text className="text-surface-600 text-xs mt-0.5">
+          <Text className="text-surface-500 text-xs mt-1 font-medium">
             {movement.category} · {UNIT_LABELS[movement.unit]}
           </Text>
         </View>
-        <View className="items-end">
+        <View className="items-end gap-1">
           {pr ? (
             <>
-              <Text className="text-brand-400 text-xl font-bold">
-                {formatValue(pr.value, movement.unit)}
-              </Text>
-              <Text className="text-surface-600 text-xs">
-                🏆 {format(parseISO(pr.date), "dd/MM/yy")}
-              </Text>
+              <View className="bg-brand-500/10 border border-brand-500/20 rounded-xl px-3 py-1.5">
+                <Text className="text-brand-400 text-lg font-bold">
+                  {formatValue(pr.value, movement.unit)}
+                </Text>
+              </View>
+              <View className="flex-row items-center gap-1">
+                <Ionicons name="trophy" size={10} color="#f59e0b" />
+                <Text className="text-surface-500 text-xs">
+                  {format(parseISO(pr.date), "dd/MM/yy")}
+                </Text>
+              </View>
             </>
           ) : (
-            <Text className="text-surface-600 text-sm">Sem PR</Text>
+            <View className="bg-surface-700/50 border border-surface-700 rounded-xl px-3 py-1.5">
+              <Text className="text-surface-500 text-sm">Sem PR</Text>
+            </View>
           )}
         </View>
       </View>
@@ -124,9 +131,12 @@ export default function PRsScreen() {
     category: "",
     lower_is_better: true,
   });
-  const [attemptForm, setAttemptForm] = useState({ date: format(new Date(), "yyyy-MM-dd"), value: "", notes: "" });
+  const [attemptForm, setAttemptForm] = useState({
+    date: format(new Date(), "yyyy-MM-dd"),
+    value: "",
+    notes: "",
+  });
 
-  // Build PR map: movement_id → best attempt
   const prMap = new Map<string, PRAttempt>();
   attempts.filter((a) => a.is_pr).forEach((a) => prMap.set(a.movement_id, a));
 
@@ -175,43 +185,58 @@ export default function PRsScreen() {
     }
   }
 
+  const inputStyle = "bg-surface-700 border border-surface-600/40 text-white rounded-xl px-4 py-3";
+  const placeholderColor = "#4a4b58";
+
   return (
     <View className="flex-1 bg-surface-900">
       <ScrollView contentContainerClassName="px-4 pt-14 pb-8">
-        <View className="flex-row justify-between items-center mb-4">
+        <View className="flex-row justify-between items-center mb-5">
           <View>
-            <Text className="text-surface-600 text-sm">Seus recordes</Text>
-            <Text className="text-white text-2xl font-bold">PRs</Text>
+            <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
+              Seus recordes
+            </Text>
+            <Text className="text-white text-3xl font-bold tracking-tight">PRs</Text>
           </View>
           <View className="flex-row gap-2">
             {movements.length === 0 && (
               <TouchableOpacity
-                className="bg-surface-700 rounded-xl px-3 py-2"
+                className="bg-surface-700 border border-surface-600/40 rounded-xl px-3 py-2.5"
                 onPress={handleSeedDefaults}
               >
-                <Text className="text-white text-xs">Padrão</Text>
+                <Text className="text-surface-400 text-xs font-semibold">Padrão</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              className="bg-brand-500 rounded-xl px-4 py-2"
+              className="bg-brand-500 rounded-xl px-4 py-2.5"
               onPress={() => setShowAddMovement(true)}
+              style={{ shadowColor: "#10b981", shadowOpacity: 0.25, shadowRadius: 8, elevation: 3 }}
             >
-              <Text className="text-white font-bold">+ Novo</Text>
+              <Text className="text-white font-bold text-sm">+ Novo</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {isLoading ? (
-          <ActivityIndicator color="#22c55e" className="mt-12" />
+          <ActivityIndicator color="#10b981" size="large" className="mt-12" />
         ) : movements.length === 0 ? (
-          <View className="items-center py-12 gap-3">
-            <Text className="text-4xl">🏆</Text>
-            <Text className="text-white font-semibold">Nenhum movimento cadastrado</Text>
+          <View className="items-center py-16 gap-4">
+            <View className="w-20 h-20 bg-amber-500/10 border border-amber-500/20 rounded-2xl items-center justify-center">
+              <Text className="text-4xl">🏆</Text>
+            </View>
+            <View className="items-center gap-1">
+              <Text className="text-white font-bold text-base">Nenhum PR cadastrado</Text>
+              <Text className="text-surface-500 text-sm text-center">
+                Adicione movimentos para registrar seus recordes
+              </Text>
+            </View>
             <TouchableOpacity
-              className="bg-surface-700 rounded-xl px-5 py-3 mt-2"
+              className="bg-surface-700 border border-surface-600/40 rounded-xl px-6 py-3"
               onPress={handleSeedDefaults}
             >
-              <Text className="text-white text-sm">Adicionar movimentos CrossFit padrão</Text>
+              <Text className="text-white text-sm font-semibold">
+                Adicionar movimentos CrossFit
+              </Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -228,62 +253,63 @@ export default function PRsScreen() {
 
       {/* Add attempt modal */}
       <Modal visible={!!selectedMovement} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          className="flex-1"
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-        >
+        <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <View className="flex-1 justify-end">
-            <View className="bg-surface-800 rounded-t-3xl px-5 pt-5 pb-10 gap-4">
-              <Text className="text-white text-lg font-bold">
-                Nova tentativa — {selectedMovement?.name}
-              </Text>
-              <View className="gap-1">
-                <Text className="text-surface-600 text-xs">Data (YYYY-MM-DD)</Text>
+            <View className="bg-surface-800 border border-surface-700/60 rounded-t-3xl px-5 pt-6 pb-10 gap-4">
+              <View className="w-10 h-1 bg-surface-600 rounded-full self-center mb-2" />
+              <View className="flex-row items-center gap-2">
+                <Ionicons name="trophy" size={18} color="#f59e0b" />
+                <Text className="text-white text-xl font-bold">
+                  {selectedMovement?.name}
+                </Text>
+              </View>
+              <View className="gap-1.5">
+                <Text className="text-surface-500 text-xs font-semibold">Data (YYYY-MM-DD)</Text>
                 <TextInput
-                  className="bg-surface-700 text-white rounded-xl px-4 py-3"
+                  className={inputStyle}
                   value={attemptForm.date}
                   onChangeText={(v) => setAttemptForm((f) => ({ ...f, date: v }))}
                 />
               </View>
-              <View className="gap-1">
-                <Text className="text-surface-600 text-xs">
+              <View className="gap-1.5">
+                <Text className="text-surface-500 text-xs font-semibold">
                   Valor ({selectedMovement ? UNIT_LABELS[selectedMovement.unit] : ""})
                 </Text>
                 <TextInput
-                  className="bg-surface-700 text-white rounded-xl px-4 py-3"
+                  className={inputStyle}
                   value={attemptForm.value}
                   onChangeText={(v) => setAttemptForm((f) => ({ ...f, value: v }))}
                   keyboardType="decimal-pad"
                   placeholder="ex: 312 (segundos) ou 120.5 (kg)"
-                  placeholderTextColor="#475569"
+                  placeholderTextColor={placeholderColor}
                 />
               </View>
-              <View className="gap-1">
-                <Text className="text-surface-600 text-xs">Observações (opcional)</Text>
+              <View className="gap-1.5">
+                <Text className="text-surface-500 text-xs font-semibold">Observações (opcional)</Text>
                 <TextInput
-                  className="bg-surface-700 text-white rounded-xl px-4 py-3"
+                  className={inputStyle}
                   value={attemptForm.notes}
                   onChangeText={(v) => setAttemptForm((f) => ({ ...f, notes: v }))}
                   placeholder="Como foi?"
-                  placeholderTextColor="#475569"
+                  placeholderTextColor={placeholderColor}
                 />
               </View>
-              <View className="flex-row gap-3">
+              <View className="flex-row gap-3 mt-1">
                 <TouchableOpacity
-                  className="flex-1 bg-surface-700 rounded-xl py-3 items-center"
+                  className="flex-1 bg-surface-700 border border-surface-600/40 rounded-xl py-3.5 items-center"
                   onPress={() => setSelectedMovement(null)}
                 >
-                  <Text className="text-white font-medium">Cancelar</Text>
+                  <Text className="text-white font-semibold">Cancelar</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  className="flex-1 bg-brand-500 rounded-xl py-3 items-center"
+                  className="flex-1 bg-brand-500 rounded-xl py-3.5 items-center"
                   onPress={handleSaveAttempt}
                   disabled={savingAttempt}
                 >
                   {savingAttempt ? (
                     <ActivityIndicator color="white" />
                   ) : (
-                    <Text className="text-white font-bold">Salvar</Text>
+                    <Text className="text-white font-bold">Salvar PR</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -294,71 +320,79 @@ export default function PRsScreen() {
 
       {/* Add movement modal */}
       <Modal visible={showAddMovement} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          className="flex-1"
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-        >
+        <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <View className="flex-1 justify-end">
-            <View className="bg-surface-800 rounded-t-3xl px-5 pt-5 pb-10 gap-4">
-              <Text className="text-white text-lg font-bold">Novo movimento</Text>
+            <View className="bg-surface-800 border border-surface-700/60 rounded-t-3xl px-5 pt-6 pb-10 gap-4">
+              <View className="w-10 h-1 bg-surface-600 rounded-full self-center mb-2" />
+              <Text className="text-white text-xl font-bold">Novo movimento</Text>
               <TextInput
-                className="bg-surface-700 text-white rounded-xl px-4 py-3"
+                className={inputStyle}
                 value={newMovementForm.name}
                 onChangeText={(v) => setNewMovementForm((f) => ({ ...f, name: v }))}
                 placeholder="Nome (ex: Karen, Deadlift 1RM)"
-                placeholderTextColor="#475569"
+                placeholderTextColor={placeholderColor}
               />
               <TextInput
-                className="bg-surface-700 text-white rounded-xl px-4 py-3"
+                className={inputStyle}
                 value={newMovementForm.category}
                 onChangeText={(v) => setNewMovementForm((f) => ({ ...f, category: v }))}
                 placeholder="Categoria (ex: CrossFit, Levantamento)"
-                placeholderTextColor="#475569"
+                placeholderTextColor={placeholderColor}
               />
-              <View className="gap-1">
-                <Text className="text-surface-600 text-xs">Unidade</Text>
+              <View className="gap-1.5">
+                <Text className="text-surface-500 text-xs font-semibold">Unidade</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <View className="flex-row gap-2">
                     {(Object.keys(UNIT_LABELS) as PRUnit[]).map((u) => (
                       <TouchableOpacity
                         key={u}
                         onPress={() => setNewMovementForm((f) => ({ ...f, unit: u }))}
-                        className={`px-3 py-2 rounded-lg ${
-                          newMovementForm.unit === u ? "bg-brand-500" : "bg-surface-700"
+                        className={`px-3 py-2 rounded-lg border ${
+                          newMovementForm.unit === u
+                            ? "bg-brand-500/15 border-brand-500/30"
+                            : "bg-surface-700/50 border-surface-600/40"
                         }`}
                       >
-                        <Text className="text-white text-xs">{UNIT_LABELS[u]}</Text>
+                        <Text
+                          className={`text-xs font-semibold ${
+                            newMovementForm.unit === u ? "text-brand-400" : "text-surface-500"
+                          }`}
+                        >
+                          {UNIT_LABELS[u]}
+                        </Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 </ScrollView>
               </View>
               <TouchableOpacity
-                className="flex-row items-center gap-2"
+                className="flex-row items-center gap-3"
                 onPress={() =>
                   setNewMovementForm((f) => ({ ...f, lower_is_better: !f.lower_is_better }))
                 }
               >
                 <View
-                  className={`w-5 h-5 rounded border-2 items-center justify-center ${
-                    newMovementForm.lower_is_better ? "bg-brand-500 border-brand-500" : "border-surface-600"
+                  className={`w-5 h-5 rounded-md border-2 items-center justify-center ${
+                    newMovementForm.lower_is_better
+                      ? "bg-brand-500 border-brand-600"
+                      : "border-surface-600"
                   }`}
                 >
                   {newMovementForm.lower_is_better && (
-                    <Text className="text-white text-xs">✓</Text>
+                    <Text className="text-white text-xs font-bold">✓</Text>
                   )}
                 </View>
                 <Text className="text-white text-sm">Menor é melhor (tempo)</Text>
               </TouchableOpacity>
-              <View className="flex-row gap-3">
+              <View className="flex-row gap-3 mt-1">
                 <TouchableOpacity
-                  className="flex-1 bg-surface-700 rounded-xl py-3 items-center"
+                  className="flex-1 bg-surface-700 border border-surface-600/40 rounded-xl py-3.5 items-center"
                   onPress={() => setShowAddMovement(false)}
                 >
-                  <Text className="text-white font-medium">Cancelar</Text>
+                  <Text className="text-white font-semibold">Cancelar</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  className="flex-1 bg-brand-500 rounded-xl py-3 items-center"
+                  className="flex-1 bg-brand-500 rounded-xl py-3.5 items-center"
                   onPress={handleAddMovement}
                 >
                   <Text className="text-white font-bold">Criar</Text>

@@ -17,33 +17,27 @@ import { ptBR } from "date-fns/locale";
 import { useRunSessions, useUpsertRunSession, useDeleteRunSession } from "@/hooks/useRunSessions";
 import { RunSession, IntervalType } from "@/types";
 import { formatPace, formatDuration } from "@/utils/calculations";
-import { Card } from "@/components/ui/Card";
+import { SectionLabel } from "@/components/ui/Card";
 
 const INTERVAL_TYPES: IntervalType[] = [
   "Easy", "Tempo", "Threshold", "Intervals", "VO2max", "Long Run", "Race", "Outro",
 ];
 
-const INTERVAL_COLORS: Record<IntervalType, string> = {
-  Easy: "bg-green-700",
-  Tempo: "bg-yellow-600",
-  Threshold: "bg-orange-600",
-  Intervals: "bg-red-600",
-  VO2max: "bg-purple-600",
-  "Long Run": "bg-blue-600",
-  Race: "bg-pink-600",
-  Outro: "bg-surface-600",
+const INTERVAL_COLORS: Record<IntervalType, { bg: string; text: string; border: string }> = {
+  Easy:      { bg: "rgba(34,197,94,0.12)",   text: "#22c55e", border: "rgba(34,197,94,0.25)"  },
+  Tempo:     { bg: "rgba(234,179,8,0.12)",   text: "#eab308", border: "rgba(234,179,8,0.25)"  },
+  Threshold: { bg: "rgba(249,115,22,0.12)",  text: "#f97316", border: "rgba(249,115,22,0.25)" },
+  Intervals: { bg: "rgba(239,68,68,0.12)",   text: "#ef4444", border: "rgba(239,68,68,0.25)"  },
+  VO2max:    { bg: "rgba(168,85,247,0.12)",  text: "#a855f7", border: "rgba(168,85,247,0.25)" },
+  "Long Run":{ bg: "rgba(59,130,246,0.12)",  text: "#3b82f6", border: "rgba(59,130,246,0.25)" },
+  Race:      { bg: "rgba(236,72,153,0.12)",  text: "#ec4899", border: "rgba(236,72,153,0.25)" },
+  Outro:     { bg: "rgba(113,113,127,0.12)", text: "#71717f", border: "rgba(113,113,127,0.25)"},
 };
 
-function SessionRow({
-  session,
-  onDelete,
-}: {
-  session: RunSession;
-  onDelete: (id: string) => void;
-}) {
+function SessionRow({ session, onDelete }: { session: RunSession; onDelete: (id: string) => void }) {
   const date = parseISO(session.date);
   const pace = session.pace_min_km ? formatPace(session.pace_min_km) : "—";
-  const color = INTERVAL_COLORS[session.interval_type as IntervalType] ?? "bg-surface-600";
+  const color = INTERVAL_COLORS[session.interval_type as IntervalType] ?? INTERVAL_COLORS.Outro;
 
   return (
     <TouchableOpacity
@@ -53,32 +47,33 @@ function SessionRow({
           { text: "Excluir", style: "destructive", onPress: () => onDelete(session.id) },
         ])
       }
-      className="bg-surface-800 rounded-xl px-4 py-3 mb-2"
+      className="bg-surface-800 border border-surface-700/60 rounded-2xl px-4 py-3.5 mb-2.5"
     >
-      <View className="flex-row justify-between items-center">
+      <View className="flex-row justify-between items-center mb-2">
         <View className="flex-row items-center gap-2">
-          <View className={`${color} rounded-lg px-2 py-0.5`}>
-            <Text className="text-white text-xs font-semibold">
+          <View
+            className="px-2.5 py-1 rounded-lg border"
+            style={{ backgroundColor: color.bg, borderColor: color.border }}
+          >
+            <Text className="text-xs font-bold" style={{ color: color.text }}>
               {session.interval_type}
             </Text>
           </View>
-          <Text className="text-surface-600 text-xs">
-            {format(date, "dd/MM", { locale: ptBR })}
+          <Text className="text-surface-500 text-xs font-medium">
+            {format(date, "dd 'de' MMM", { locale: ptBR })}
           </Text>
         </View>
-        <Text className="text-white text-sm font-bold">
+        <Text className="text-white text-base font-bold">
           {session.distance_km?.toFixed(2) ?? "—"} km
         </Text>
       </View>
-      <View className="flex-row justify-between mt-2">
-        <Text className="text-surface-600 text-xs">
-          ⏱️ {session.duration_min ? formatDuration(session.duration_min) : "—"}
+      <View className="flex-row gap-4">
+        <Text className="text-surface-500 text-xs">
+          ⏱ {session.duration_min ? formatDuration(session.duration_min) : "—"}
         </Text>
-        <Text className="text-surface-600 text-xs">🏃 {pace}/km</Text>
-        <Text className="text-surface-600 text-xs">
-          ❤️ {session.avg_hr ?? "—"} bpm
-        </Text>
-        <Text className="text-surface-600 text-xs">
+        <Text className="text-surface-500 text-xs">🏃 {pace}/km</Text>
+        <Text className="text-surface-500 text-xs">❤️ {session.avg_hr ?? "—"} bpm</Text>
+        <Text className="text-surface-500 text-xs">
           🔥 {session.calories_kcal ? Math.round(session.calories_kcal) : "—"} kcal
         </Text>
       </View>
@@ -86,35 +81,29 @@ function SessionRow({
   );
 }
 
-function SummaryCard({ sessions }: { sessions: RunSession[] }) {
+function SummaryRow({ sessions }: { sessions: RunSession[] }) {
   const totalKm = sessions.reduce((s, r) => s + (r.distance_km ?? 0), 0);
-  const totalMin = sessions.reduce((s, r) => s + (r.duration_min ?? 0), 0);
   const paces = sessions.filter((r) => r.pace_min_km).map((r) => r.pace_min_km!);
   const avgPace = paces.length ? paces.reduce((a, b) => a + b, 0) / paces.length : 0;
   const hrs = sessions.filter((r) => r.avg_hr).map((r) => r.avg_hr!);
   const avgHr = hrs.length ? Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) : 0;
 
+  const stats = [
+    { label: "km total", value: totalKm.toFixed(1), color: "text-brand-400" },
+    { label: "sessões", value: sessions.length.toString(), color: "text-sky-400" },
+    { label: "pace médio", value: avgPace ? formatPace(avgPace) : "—", color: "text-amber-400" },
+    { label: "FC média", value: avgHr ? `${avgHr}` : "—", color: "text-rose-400" },
+  ];
+
   return (
-    <Card className="flex-row flex-wrap gap-3 mb-4">
-      <View className="flex-1 items-center">
-        <Text className="text-white text-xl font-bold">{totalKm.toFixed(1)}</Text>
-        <Text className="text-surface-600 text-xs">km total</Text>
-      </View>
-      <View className="flex-1 items-center">
-        <Text className="text-white text-xl font-bold">{sessions.length}</Text>
-        <Text className="text-surface-600 text-xs">sessões</Text>
-      </View>
-      <View className="flex-1 items-center">
-        <Text className="text-white text-xl font-bold">
-          {avgPace ? formatPace(avgPace) : "—"}
-        </Text>
-        <Text className="text-surface-600 text-xs">pace médio</Text>
-      </View>
-      <View className="flex-1 items-center">
-        <Text className="text-white text-xl font-bold">{avgHr || "—"}</Text>
-        <Text className="text-surface-600 text-xs">FC média</Text>
-      </View>
-    </Card>
+    <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 flex-row mb-4">
+      {stats.map((s, i) => (
+        <View key={i} className={`flex-1 items-center ${i < stats.length - 1 ? "border-r border-surface-700/50" : ""}`}>
+          <Text className={`text-xl font-bold ${s.color}`}>{s.value}</Text>
+          <Text className="text-surface-500 text-xs mt-0.5">{s.label}</Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -159,38 +148,39 @@ export default function CorridasScreen() {
       <ScrollView
         contentContainerClassName="px-4 pt-14 pb-8"
         refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={refetch}
-            tintColor="#22c55e"
-          />
+          <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#10b981" />
         }
       >
-        <View className="flex-row justify-between items-center mb-4">
+        <View className="flex-row justify-between items-center mb-5">
           <View>
-            <Text className="text-surface-600 text-sm">Últimos 3 meses</Text>
-            <Text className="text-white text-2xl font-bold">Corridas</Text>
+            <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
+              Últimos 3 meses
+            </Text>
+            <Text className="text-white text-3xl font-bold tracking-tight">Corridas</Text>
           </View>
           <TouchableOpacity
-            className="bg-brand-500 rounded-xl px-4 py-2"
+            className="bg-brand-500 rounded-xl px-4 py-2.5 border border-brand-600"
             onPress={() => setShowModal(true)}
+            style={{ shadowColor: "#10b981", shadowOpacity: 0.25, shadowRadius: 8, elevation: 3 }}
           >
-            <Text className="text-white font-bold">+ Nova</Text>
+            <Text className="text-white font-bold text-sm">+ Nova</Text>
           </TouchableOpacity>
         </View>
 
         {isLoading ? (
-          <ActivityIndicator color="#22c55e" className="mt-12" />
+          <ActivityIndicator color="#10b981" size="large" className="mt-12" />
         ) : (
           <>
-            <SummaryCard sessions={sessions} />
+            <SummaryRow sessions={sessions} />
             {sessions.map((s) => (
               <SessionRow key={s.id} session={s} onDelete={(id) => remove(id)} />
             ))}
             {sessions.length === 0 && (
-              <Text className="text-surface-600 text-center mt-8">
-                Nenhuma corrida registrada.
-              </Text>
+              <View className="items-center py-16 gap-3">
+                <Text className="text-4xl">🏃</Text>
+                <Text className="text-white font-semibold">Nenhuma corrida registrada</Text>
+                <Text className="text-surface-500 text-sm">Toque em + Nova para adicionar</Text>
+              </View>
             )}
           </>
         )}
@@ -198,46 +188,52 @@ export default function CorridasScreen() {
 
       {/* Add session modal */}
       <Modal visible={showModal} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          className="flex-1"
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-        >
+        <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <View className="flex-1 justify-end">
-            <View className="bg-surface-800 rounded-t-3xl px-5 pt-5 pb-10 gap-4">
-              <Text className="text-white text-lg font-bold">Nova sessão</Text>
+            <View className="bg-surface-800 border border-surface-700/60 rounded-t-3xl px-5 pt-6 pb-10 gap-4">
+              <View className="w-10 h-1 bg-surface-600 rounded-full self-center mb-2" />
+              <Text className="text-white text-xl font-bold">Nova sessão</Text>
 
               {/* Date */}
-              <View className="gap-1">
-                <Text className="text-surface-600 text-xs">Data (YYYY-MM-DD)</Text>
+              <View className="gap-1.5">
+                <Text className="text-surface-500 text-xs font-semibold">Data (YYYY-MM-DD)</Text>
                 <TextInput
-                  className="bg-surface-700 text-white rounded-xl px-4 py-3"
+                  className="bg-surface-700 border border-surface-600/40 text-white rounded-xl px-4 py-3"
                   value={form.date}
                   onChangeText={(v) => setF("date", v)}
-                  placeholderTextColor="#475569"
+                  placeholderTextColor="#4a4b58"
                 />
               </View>
 
-              {/* Interval type */}
-              <View className="gap-1">
-                <Text className="text-surface-600 text-xs">Tipo</Text>
+              {/* Type selector */}
+              <View className="gap-1.5">
+                <Text className="text-surface-500 text-xs font-semibold">Tipo</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <View className="flex-row gap-2">
-                    {INTERVAL_TYPES.map((t) => (
-                      <TouchableOpacity
-                        key={t}
-                        onPress={() => setF("interval_type", t)}
-                        className={`px-3 py-1.5 rounded-lg ${
-                          form.interval_type === t ? "bg-brand-500" : "bg-surface-700"
-                        }`}
-                      >
-                        <Text className="text-white text-xs font-medium">{t}</Text>
-                      </TouchableOpacity>
-                    ))}
+                    {INTERVAL_TYPES.map((t) => {
+                      const c = INTERVAL_COLORS[t];
+                      const active = form.interval_type === t;
+                      return (
+                        <TouchableOpacity
+                          key={t}
+                          onPress={() => setF("interval_type", t)}
+                          className="px-3 py-1.5 rounded-lg border"
+                          style={{
+                            backgroundColor: active ? c.bg : "rgba(44,45,54,0.5)",
+                            borderColor: active ? c.border : "#2c2d36",
+                          }}
+                        >
+                          <Text className="text-xs font-bold" style={{ color: active ? c.text : "#72737f" }}>
+                            {t}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 </ScrollView>
               </View>
 
-              {/* Metrics row 1 */}
+              {/* Row 1 */}
               <View className="flex-row gap-3">
                 {[
                   { key: "distance", label: "Distância", unit: "km" },
@@ -245,21 +241,21 @@ export default function CorridasScreen() {
                   { key: "pace", label: "Pace", unit: "min/km" },
                 ].map(({ key, label, unit }) => (
                   <View key={key} className="flex-1 gap-1">
-                    <Text className="text-surface-600 text-xs">{label}</Text>
+                    <Text className="text-surface-500 text-xs font-semibold">{label}</Text>
                     <TextInput
-                      className="bg-surface-700 text-white rounded-xl px-3 py-2.5 text-sm"
+                      className="bg-surface-700 border border-surface-600/40 text-white rounded-xl px-3 py-2.5 text-sm"
                       value={form[key] ?? ""}
                       onChangeText={(v) => setF(key, v)}
                       keyboardType="decimal-pad"
                       placeholder="0"
-                      placeholderTextColor="#475569"
+                      placeholderTextColor="#4a4b58"
                     />
                     <Text className="text-surface-600 text-xs">{unit}</Text>
                   </View>
                 ))}
               </View>
 
-              {/* Metrics row 2 */}
+              {/* Row 2 */}
               <View className="flex-row gap-3">
                 {[
                   { key: "avg_hr", label: "FC média", unit: "bpm" },
@@ -268,29 +264,29 @@ export default function CorridasScreen() {
                   { key: "kcal", label: "kcal", unit: "" },
                 ].map(({ key, label, unit }) => (
                   <View key={key} className="flex-1 gap-1">
-                    <Text className="text-surface-600 text-xs">{label}</Text>
+                    <Text className="text-surface-500 text-xs font-semibold">{label}</Text>
                     <TextInput
-                      className="bg-surface-700 text-white rounded-xl px-3 py-2.5 text-sm"
+                      className="bg-surface-700 border border-surface-600/40 text-white rounded-xl px-3 py-2.5 text-sm"
                       value={form[key] ?? ""}
                       onChangeText={(v) => setF(key, v)}
                       keyboardType="decimal-pad"
                       placeholder="0"
-                      placeholderTextColor="#475569"
+                      placeholderTextColor="#4a4b58"
                     />
                     {unit && <Text className="text-surface-600 text-xs">{unit}</Text>}
                   </View>
                 ))}
               </View>
 
-              <View className="flex-row gap-3 mt-2">
+              <View className="flex-row gap-3 mt-1">
                 <TouchableOpacity
-                  className="flex-1 bg-surface-700 rounded-xl py-3 items-center"
+                  className="flex-1 bg-surface-700 border border-surface-600/40 rounded-xl py-3.5 items-center"
                   onPress={() => setShowModal(false)}
                 >
-                  <Text className="text-white font-medium">Cancelar</Text>
+                  <Text className="text-white font-semibold">Cancelar</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  className="flex-1 bg-brand-500 rounded-xl py-3 items-center"
+                  className="flex-1 bg-brand-500 rounded-xl py-3.5 items-center"
                   onPress={handleSave}
                   disabled={saving}
                 >
@@ -308,4 +304,3 @@ export default function CorridasScreen() {
     </View>
   );
 }
-

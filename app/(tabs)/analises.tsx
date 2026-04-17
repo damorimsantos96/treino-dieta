@@ -8,13 +8,18 @@ import {
   Dimensions,
 } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import { subDays, subMonths, format, parseISO, eachWeekOfInterval, startOfWeek, endOfWeek } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import {
+  subDays,
+  subMonths,
+  format,
+  parseISO,
+  eachWeekOfInterval,
+  endOfWeek,
+} from "date-fns";
 import { getDailyLogs, getRunSessions } from "@/lib/api";
 import { computeDailyCalculations } from "@/utils/calculations";
 import { useUserMetrics } from "@/hooks/useUserProfile";
-import { DailyLog } from "@/types";
-import { Card } from "@/components/ui/Card";
+import { Card, SectionLabel } from "@/components/ui/Card";
 
 const { width } = Dimensions.get("window");
 const CHART_WIDTH = width - 64;
@@ -36,10 +41,9 @@ function periodToDate(p: Period): Date {
   return subMonths(now, 12);
 }
 
-// Minimal SVG-like bar chart using View
 function SimpleBarChart({
   data,
-  color = "#22c55e",
+  color = "#10b981",
   height = 120,
 }: {
   data: { label: string; value: number }[];
@@ -58,11 +62,24 @@ function SimpleBarChart({
             <View
               style={{
                 width: barWidth,
-                height: Math.max(2, (d.value / max) * (height - 16)),
+                height: Math.max(3, (d.value / max) * (height - 20)),
                 backgroundColor: color,
-                borderRadius: 3,
+                borderRadius: 4,
+                opacity: 0.85,
               }}
-            />
+            >
+              <View
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: "40%",
+                  backgroundColor: "rgba(255,255,255,0.2)",
+                  borderRadius: 4,
+                }}
+              />
+            </View>
           </View>
         ))}
       </View>
@@ -70,10 +87,9 @@ function SimpleBarChart({
   );
 }
 
-// Simple line trend using View
 function SparkLine({
   data,
-  color = "#22c55e",
+  color = "#10b981",
   height = 80,
 }: {
   data: number[];
@@ -105,35 +121,38 @@ function SparkLine({
               left: x1,
               top: Math.min(y1, y2) - 1,
               width: len,
-              height: 2,
+              height: 2.5,
               backgroundColor: color,
+              borderRadius: 2,
               transformOrigin: "left center",
               transform: [{ rotate: `${angle}deg` }],
+              opacity: 0.9,
             }}
           />
         );
       })}
-      {/* Latest dot */}
       <View
         style={{
           position: "absolute",
-          left: (data.length - 1) * pointW - 4,
-          top: height - ((data[data.length - 1] - min) / range) * height - 4,
-          width: 8,
-          height: 8,
-          borderRadius: 4,
+          left: (data.length - 1) * pointW - 5,
+          top: height - ((data[data.length - 1] - min) / range) * height - 5,
+          width: 10,
+          height: 10,
+          borderRadius: 5,
           backgroundColor: color,
+          borderWidth: 2,
+          borderColor: "#1c1d23",
         }}
       />
     </View>
   );
 }
 
-function StatRow({ label, value }: { label: string; value: string }) {
+function StatRow({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
   return (
-    <View className="flex-row justify-between py-2 border-b border-surface-700">
-      <Text className="text-surface-600 text-sm">{label}</Text>
-      <Text className="text-white text-sm font-semibold">{value}</Text>
+    <View className="flex-row justify-between items-center py-2.5 border-b border-surface-700/50">
+      <Text className="text-surface-500 text-sm">{label}</Text>
+      <Text className={`text-sm font-bold ${valueColor ?? "text-white"}`}>{value}</Text>
     </View>
   );
 }
@@ -155,7 +174,6 @@ export default function AnalisesScreen() {
   const userMetrics = useUserMetrics();
   const isLoading = loadingLogs || loadingRuns;
 
-  // Weight trend (most recent first → reverse for chart)
   const weightData = logs
     .filter((l) => l.weight_kg)
     .reverse()
@@ -165,13 +183,11 @@ export default function AnalisesScreen() {
   const firstWeight = weightData[0];
   const weightDelta = latestWeight && firstWeight ? latestWeight - firstWeight : 0;
 
-  // 7-day moving average of weight
   const weightMa7 = weightData.map((_, i) => {
     const slice = weightData.slice(Math.max(0, i - 6), i + 1);
     return slice.reduce((a, b) => a + b, 0) / slice.length;
   });
 
-  // TDEE per day
   const tdeeData = logs
     .filter((l) => l.weight_kg)
     .reverse()
@@ -180,20 +196,16 @@ export default function AnalisesScreen() {
       value: computeDailyCalculations(l, parseISO(l.date), userMetrics).tdee_kcal,
     }));
 
-  const avgTdee =
-    tdeeData.length
-      ? tdeeData.reduce((s, d) => s + d.value, 0) / tdeeData.length
-      : 0;
+  const avgTdee = tdeeData.length
+    ? tdeeData.reduce((s, d) => s + d.value, 0) / tdeeData.length
+    : 0;
 
-  // Weekly km
   const totalKm = runs.reduce((s, r) => s + (r.distance_km ?? 0), 0);
-  const avgPace =
-    runs.filter((r) => r.pace_min_km).length
-      ? runs.filter((r) => r.pace_min_km).reduce((s, r) => s + r.pace_min_km!, 0) /
-        runs.filter((r) => r.pace_min_km).length
-      : 0;
+  const validPaces = runs.filter((r) => r.pace_min_km);
+  const avgPace = validPaces.length
+    ? validPaces.reduce((s, r) => s + r.pace_min_km!, 0) / validPaces.length
+    : 0;
 
-  // Weekly run volume
   const weeklyKm = eachWeekOfInterval({ start: from, end: new Date() }).map((week) => {
     const wEnd = endOfWeek(week);
     const weekRuns = runs.filter((r) => {
@@ -206,16 +218,10 @@ export default function AnalisesScreen() {
     };
   });
 
-  // Days with training
   const trainingDays = logs.filter((l) => {
     return (
-      (l.min_academia ?? 0) +
-        (l.min_boxe ?? 0) +
-        (l.min_surf ?? 0) +
-        (l.min_corrida ?? 0) +
-        (l.min_crossfit ?? 0) +
-        (l.min_musculacao ?? 0) >
-      0
+      (l.min_academia ?? 0) + (l.min_boxe ?? 0) + (l.min_surf ?? 0) +
+      (l.min_corrida ?? 0) + (l.min_crossfit ?? 0) + (l.min_musculacao ?? 0) > 0
     );
   }).length;
 
@@ -225,12 +231,14 @@ export default function AnalisesScreen() {
       contentContainerClassName="px-4 pt-14 pb-10 gap-5"
     >
       <View>
-        <Text className="text-surface-600 text-sm">Tendências</Text>
-        <Text className="text-white text-2xl font-bold">Análises</Text>
+        <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
+          Tendências
+        </Text>
+        <Text className="text-white text-3xl font-bold tracking-tight">Análises</Text>
       </View>
 
       {/* Period selector */}
-      <View className="flex-row bg-surface-800 rounded-2xl p-1 gap-1">
+      <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1">
         {PERIODS.map(({ key, label }) => (
           <TouchableOpacity
             key={key}
@@ -240,8 +248,8 @@ export default function AnalisesScreen() {
             onPress={() => setPeriod(key)}
           >
             <Text
-              className={`text-sm font-semibold ${
-                period === key ? "text-white" : "text-surface-600"
+              className={`text-sm font-bold ${
+                period === key ? "text-white" : "text-surface-500"
               }`}
             >
               {label}
@@ -251,24 +259,24 @@ export default function AnalisesScreen() {
       </View>
 
       {isLoading ? (
-        <ActivityIndicator color="#22c55e" className="mt-12" />
+        <ActivityIndicator color="#10b981" size="large" className="mt-12" />
       ) : (
         <>
-          {/* ── Peso ───────────────────────────────────────────────── */}
-          <Card className="gap-3">
-            <Text className="text-white font-bold text-base">⚖️ Peso</Text>
+          {/* ── Peso ─────────────────────────────────────── */}
+          <Card className="gap-4">
+            <SectionLabel label="Peso" />
             {weightData.length > 1 ? (
               <>
-                <SparkLine data={weightMa7} color="#22c55e" />
-                <View className="flex-row gap-4 mt-2">
-                  <StatRow
-                    label="Atual"
-                    value={`${latestWeight?.toFixed(1) ?? "—"} kg`}
-                  />
-                </View>
+                <SparkLine data={weightMa7} color="#10b981" />
+                <StatRow
+                  label="Atual"
+                  value={`${latestWeight?.toFixed(1) ?? "—"} kg`}
+                  valueColor="text-brand-400"
+                />
                 <StatRow
                   label="Variação no período"
                   value={`${weightDelta >= 0 ? "+" : ""}${weightDelta.toFixed(1)} kg`}
+                  valueColor={weightDelta <= 0 ? "text-brand-400" : "text-amber-400"}
                 />
                 <StatRow
                   label="Menor"
@@ -280,21 +288,20 @@ export default function AnalisesScreen() {
                 />
               </>
             ) : (
-              <Text className="text-surface-600 text-sm">
-                Dados insuficientes para exibir gráfico.
-              </Text>
+              <Text className="text-surface-500 text-sm">Dados insuficientes para exibir gráfico.</Text>
             )}
           </Card>
 
-          {/* ── Calorias ────────────────────────────────────────────── */}
-          <Card className="gap-3">
-            <Text className="text-white font-bold text-base">🔥 Gasto Calórico</Text>
+          {/* ── Calorias ─────────────────────────────────── */}
+          <Card className="gap-4">
+            <SectionLabel label="Gasto Calórico" />
             {tdeeData.length > 0 ? (
               <>
                 <SimpleBarChart data={tdeeData} color="#f97316" />
                 <StatRow
                   label="Média diária"
-                  value={`${Math.round(avgTdee)} kcal`}
+                  value={`${Math.round(avgTdee).toLocaleString()} kcal`}
+                  valueColor="text-orange-400"
                 />
                 <StatRow
                   label="Dias com atividade"
@@ -302,17 +309,21 @@ export default function AnalisesScreen() {
                 />
               </>
             ) : (
-              <Text className="text-surface-600 text-sm">Sem dados de calorias.</Text>
+              <Text className="text-surface-500 text-sm">Sem dados de calorias.</Text>
             )}
           </Card>
 
-          {/* ── Corridas ────────────────────────────────────────────── */}
-          <Card className="gap-3">
-            <Text className="text-white font-bold text-base">🏃 Corridas</Text>
+          {/* ── Corridas ─────────────────────────────────── */}
+          <Card className="gap-4">
+            <SectionLabel label="Corridas" />
             {weeklyKm.length > 0 ? (
               <>
                 <SimpleBarChart data={weeklyKm} color="#3b82f6" />
-                <StatRow label="Km total" value={`${totalKm.toFixed(1)} km`} />
+                <StatRow
+                  label="Km total"
+                  value={`${totalKm.toFixed(1)} km`}
+                  valueColor="text-sky-400"
+                />
                 <StatRow label="Sessões" value={`${runs.length}`} />
                 <StatRow
                   label="Pace médio"
@@ -337,13 +348,13 @@ export default function AnalisesScreen() {
                 />
               </>
             ) : (
-              <Text className="text-surface-600 text-sm">Sem corridas neste período.</Text>
+              <Text className="text-surface-500 text-sm">Sem corridas neste período.</Text>
             )}
           </Card>
 
-          {/* ── Volume de treino ────────────────────────────────────── */}
-          <Card className="gap-3">
-            <Text className="text-white font-bold text-base">📊 Volume de Treino</Text>
+          {/* ── Volume de Treino ──────────────────────────── */}
+          <Card className="gap-4">
+            <SectionLabel label="Volume de Treino" />
             {(() => {
               const byActivity = [
                 { label: "Academia", key: "min_academia", color: "#a855f7" },
@@ -351,24 +362,26 @@ export default function AnalisesScreen() {
                 { label: "Surf", key: "min_surf", color: "#06b6d4" },
                 { label: "CrossFit", key: "min_crossfit", color: "#f59e0b" },
                 { label: "Musculação", key: "min_musculacao", color: "#8b5cf6" },
-              ].map((a) => ({
-                ...a,
-                total: logs.reduce((s, l) => s + ((l as any)[a.key] ?? 0), 0),
-              })).filter((a) => a.total > 0);
+              ]
+                .map((a) => ({
+                  ...a,
+                  total: logs.reduce((s, l) => s + ((l[a.key as keyof typeof l] as number | null) ?? 0), 0),
+                }))
+                .filter((a) => a.total > 0);
 
               if (byActivity.length === 0)
-                return <Text className="text-surface-600 text-sm">Sem dados.</Text>;
+                return <Text className="text-surface-500 text-sm">Sem dados de volume.</Text>;
 
               const maxMin = Math.max(...byActivity.map((a) => a.total));
               return byActivity.map((a) => (
-                <View key={a.key} className="gap-1">
-                  <View className="flex-row justify-between">
-                    <Text className="text-white text-sm">{a.label}</Text>
-                    <Text className="text-surface-600 text-sm">
-                      {Math.round(a.total / 60)}h{Math.round(a.total % 60)}m
+                <View key={a.key} className="gap-2">
+                  <View className="flex-row justify-between items-center">
+                    <Text className="text-white text-sm font-semibold">{a.label}</Text>
+                    <Text className="text-surface-500 text-xs font-medium">
+                      {Math.round(a.total / 60)}h {Math.round(a.total % 60)}m
                     </Text>
                   </View>
-                  <View className="h-2 bg-surface-700 rounded-full overflow-hidden">
+                  <View className="h-2.5 bg-surface-700 rounded-full overflow-hidden">
                     <View
                       style={{
                         width: `${(a.total / maxMin) * 100}%`,
@@ -376,7 +389,19 @@ export default function AnalisesScreen() {
                         height: "100%",
                         borderRadius: 4,
                       }}
-                    />
+                    >
+                      <View
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          height: "50%",
+                          backgroundColor: "rgba(255,255,255,0.18)",
+                          borderRadius: 4,
+                        }}
+                      />
+                    </View>
                   </View>
                 </View>
               ));

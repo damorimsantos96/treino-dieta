@@ -5,18 +5,12 @@ import { useAuthStore } from "@/stores/auth";
 
 type IoniconName = React.ComponentProps<typeof Ionicons>["name"];
 
-function TabIcon({
-  name,
-  focused,
-}: {
-  name: IoniconName;
-  focused: boolean;
-}) {
+function TabIcon({ name, focused }: { name: IoniconName; focused: boolean }) {
   return (
     <Ionicons
       name={focused ? name : (`${name}-outline` as IoniconName)}
-      size={24}
-      color={focused ? "#22c55e" : "#475569"}
+      size={22}
+      color={focused ? "#10b981" : "#4a4b58"}
     />
   );
 }
@@ -35,63 +29,57 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: "#1e293b",
-          borderTopColor: "#334155",
-          paddingBottom: 8,
-          paddingTop: 4,
-          height: 64,
+          backgroundColor: "#1c1d23",
+          borderTopColor: "#2c2d36",
+          borderTopWidth: 1,
+          paddingBottom: 10,
+          paddingTop: 6,
+          height: 68,
         },
-        tabBarActiveTintColor: "#22c55e",
-        tabBarInactiveTintColor: "#475569",
+        tabBarActiveTintColor: "#10b981",
+        tabBarInactiveTintColor: "#4a4b58",
         tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: "600",
+          fontSize: 10,
+          fontWeight: "700",
+          letterSpacing: 0.3,
+          marginTop: 2,
         },
+        tabBarActiveBackgroundColor: "transparent",
       }}
     >
       <Tabs.Screen
         name="hoje"
         options={{
           title: "Hoje",
-          tabBarIcon: ({ focused }) => (
-            <TabIcon name="home" focused={focused} />
-          ),
+          tabBarIcon: ({ focused }) => <TabIcon name="home" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="registrar"
         options={{
           title: "Registrar",
-          tabBarIcon: ({ focused }) => (
-            <TabIcon name="add-circle" focused={focused} />
-          ),
+          tabBarIcon: ({ focused }) => <TabIcon name="add-circle" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="corridas"
         options={{
           title: "Corridas",
-          tabBarIcon: ({ focused }) => (
-            <TabIcon name="walk" focused={focused} />
-          ),
+          tabBarIcon: ({ focused }) => <TabIcon name="walk" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="prs"
         options={{
           title: "PRs",
-          tabBarIcon: ({ focused }) => (
-            <TabIcon name="trophy" focused={focused} />
-          ),
+          tabBarIcon: ({ focused }) => <TabIcon name="trophy" focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="analises"
         options={{
           title: "Análises",
-          tabBarIcon: ({ focused }) => (
-            <TabIcon name="bar-chart" focused={focused} />
-          ),
+          tabBarIcon: ({ focused }) => <TabIcon name="bar-chart" focused={focused} />,
         }}
       />
     </Tabs>
