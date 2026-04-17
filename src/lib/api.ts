@@ -2,6 +2,12 @@ import { supabase } from "./supabase";
 import { DailyLog, RunSession, PRMovement, PRAttempt, UserProfile } from "@/types";
 import { format } from "date-fns";
 
+async function getUserId(): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user?.id) throw new Error("Não autenticado");
+  return session.user.id;
+}
+
 // ─── User Profile ────────────────────────────────────────────────────────────
 
 export async function getProfile(): Promise<UserProfile | null> {
@@ -55,10 +61,10 @@ export async function getDailyLogs(
 export async function upsertDailyLog(
   log: Partial<DailyLog> & { date: string }
 ): Promise<DailyLog> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const userId = await getUserId();
   const { data, error } = await supabase
     .from("daily_logs")
-    .upsert({ ...log, user_id: user!.id })
+    .upsert({ ...log, user_id: userId })
     .select()
     .single();
   if (error) throw error;
@@ -89,10 +95,10 @@ export async function getRunSessions(
 export async function upsertRunSession(
   session: Partial<RunSession> & { date: string; interval_type: string }
 ): Promise<RunSession> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const userId = await getUserId();
   const { data, error } = await supabase
     .from("run_sessions")
-    .upsert({ ...session, user_id: user!.id })
+    .upsert({ ...session, user_id: userId })
     .select()
     .single();
   if (error) throw error;
@@ -118,10 +124,10 @@ export async function getPRMovements(): Promise<PRMovement[]> {
 export async function createPRMovement(
   movement: Omit<PRMovement, "id" | "user_id" | "created_at">
 ): Promise<PRMovement> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const userId = await getUserId();
   const { data, error } = await supabase
     .from("pr_movements")
-    .insert({ ...movement, user_id: user!.id })
+    .insert({ ...movement, user_id: userId })
     .select()
     .single();
   if (error) throw error;
@@ -146,9 +152,8 @@ export async function getPRAttempts(movementId?: string): Promise<PRAttempt[]> {
 export async function createPRAttempt(
   attempt: Omit<PRAttempt, "id" | "user_id" | "created_at" | "is_pr" | "movement">
 ): Promise<PRAttempt> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const userId = await getUserId();
 
-  // Check if this is a new PR
   const { data: existing } = await supabase
     .from("pr_attempts")
     .select("value")
@@ -167,7 +172,6 @@ export async function createPRAttempt(
     (lowerIsBetter ? attempt.value < existing.value : attempt.value > existing.value);
 
   if (isPR && existing) {
-    // Demote previous PR
     await supabase
       .from("pr_attempts")
       .update({ is_pr: false })
@@ -177,9 +181,44 @@ export async function createPRAttempt(
 
   const { data, error } = await supabase
     .from("pr_attempts")
-    .insert({ ...attempt, user_id: user!.id, is_pr: isPR })
+    .insert({ ...attempt, user_id: userId, is_pr: isPR })
     .select("*, movement:pr_movements(*)")
     .single();
   if (error) throw error;
   return data;
+}
+
+export async function recalculatePRs(): Promise<void> {
+  const { data: allAttempts } = await supabase
+    .from("pr_attempts")
+    .select("id, movement_id, value, movement:pr_movements(lower_is_better)")
+    .order("date", { ascending: true });
+
+  if (!allAttempts || allAttempts.length === 0) return;
+
+  const bestByMovement = new Map<string, { id: string; value: number }>();
+
+  for (const attempt of allAttempts) {
+    const lowerIsBetter = (attempt.movement as any)?.lower_is_better ?? false;
+    const existing = bestByMovement.get(attempt.movement_id);
+
+    if (!existing) {
+      bestByMovement.set(attempt.movement_id, { id: attempt.id, value: attempt.value });
+    } else {
+      const isBetter = lowerIsBetter
+        ? attempt.value < existing.value
+        : attempt.value > existing.value;
+      if (isBetter) {
+        bestByMovement.set(attempt.movement_id, { id: attempt.id, value: attempt.value });
+      }
+    }
+  }
+
+  const prIds = Array.from(bestByMovement.values()).map((v) => v.id);
+
+  await supabase.from("pr_attempts").update({ is_pr: false }).neq("id", "00000000-0000-0000-0000-000000000000");
+
+  if (prIds.length > 0) {
+    await supabase.from("pr_attempts").update({ is_pr: true }).in("id", prIds);
+  }
 }

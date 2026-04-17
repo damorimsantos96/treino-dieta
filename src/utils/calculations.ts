@@ -26,10 +26,6 @@ export interface UserMetrics {
   birthDate: Date;
 }
 
-/**
- * Calorie expenditure (TDEE) — mirrors the spreadsheet formula.
- * Uses Harris-Benedict BMR with activity adjustment.
- */
 export function calculateTDEE(
   log: DailyLog,
   date: Date,
@@ -51,7 +47,8 @@ export function calculateTDEE(
     (log.min_surf ?? 0) +
     (log.min_corrida ?? 0) +
     (log.min_crossfit ?? 0) +
-    (log.min_musculacao ?? 0);
+    (log.min_musculacao ?? 0) +
+    (log.min_ciclismo ?? 0);
 
   const awakeNonActiveMin = 24 * 60 - sleepMin - totalActivityMin;
 
@@ -62,15 +59,13 @@ export function calculateTDEE(
     (log.kcal_corrida ?? 0) +
     (log.kcal_crossfit ?? 0) +
     (log.kcal_musculacao ?? 0) +
+    (log.kcal_ciclismo ?? 0) +
     (log.kcal_outros ?? 0) +
     (log.whoop_kcal ?? 0);
 
   return caloSleep + dailyActive * awakeNonActiveMin + totalActivityKcal;
 }
 
-/**
- * Hydration requirement in ml — mirrors the spreadsheet LET formula.
- */
 export function calculateWaterMl(log: DailyLog): number {
   const weight = log.weight_kg;
   if (!weight) return 0;
@@ -93,13 +88,17 @@ export function calculateWaterMl(log: DailyLog): number {
     SWEAT_RATE_ML_MIN * (log.min_corrida ?? 0) * 1.0 *
     hrFactor(log.bpm_corrida) * tempFactor(log.temp_corrida);
 
+  const ciclismo =
+    SWEAT_RATE_ML_MIN * (log.min_ciclismo ?? 0) * 0.7 *
+    hrFactor(log.bpm_ciclismo) * tempFactor(log.temp_ciclismo);
+
   const saunaTemp = log.temp_sauna ?? 80;
   const taxaFatorTemp = 1 + 0.08 * Math.exp(0.09 * (saunaTemp - 19));
   const sauna =
     SWEAT_RATE_ML_MIN * (log.min_sauna ?? 0) *
     (0.3 * hrFactor(log.bpm_sauna) + 0.7 * taxaFatorTemp);
 
-  return (basal + academia + boxe + surf + corrida + sauna) * 1.05;
+  return (basal + academia + boxe + surf + corrida + ciclismo + sauna) * 1.05;
 }
 
 export function calculateMinProtein(weight: number | null): number {
@@ -107,10 +106,6 @@ export function calculateMinProtein(weight: number | null): number {
   return weight * 1.9;
 }
 
-/**
- * Minimum carbs — varies by day of week.
- * Mon/Tue/Sun = 5.5 g/kg · Wed/Fri = 7 · Thu = 6 · Sat = 6.5
- */
 export function calculateMinCarbs(weight: number | null, date: Date): number {
   if (!weight) return 0;
   const dow = date.getDay();
@@ -130,12 +125,12 @@ export function computeDailyCalculations(
   const totalActivityMin =
     (log.min_academia ?? 0) + (log.min_boxe ?? 0) + (log.min_surf ?? 0) +
     (log.min_corrida ?? 0) + (log.min_crossfit ?? 0) + (log.min_musculacao ?? 0) +
-    (log.min_sauna ?? 0);
+    (log.min_ciclismo ?? 0) + (log.min_sauna ?? 0);
 
   const totalActivityKcal =
     (log.kcal_academia ?? 0) + (log.kcal_boxe ?? 0) + (log.kcal_surf ?? 0) +
     (log.kcal_corrida ?? 0) + (log.kcal_crossfit ?? 0) + (log.kcal_musculacao ?? 0) +
-    (log.kcal_outros ?? 0) + (log.whoop_kcal ?? 0);
+    (log.kcal_ciclismo ?? 0) + (log.kcal_outros ?? 0) + (log.whoop_kcal ?? 0);
 
   return {
     tdee_kcal: calculateTDEE(log, date, user),

@@ -14,7 +14,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { getPRMovements, getPRAttempts, createPRMovement, createPRAttempt } from "@/lib/api";
+import { getPRMovements, getPRAttempts, createPRMovement, createPRAttempt, recalculatePRs } from "@/lib/api";
 import { PRMovement, PRAttempt, PRUnit } from "@/types";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -123,6 +123,15 @@ export default function PRsScreen() {
     },
   });
 
+  const { mutate: recalc, isPending: recalcPending } = useMutation({
+    mutationFn: recalculatePRs,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["pr_attempts"] });
+      Alert.alert("Pronto", "PRs recalculados com sucesso.");
+    },
+    onError: (err: any) => Alert.alert("Erro", err.message),
+  });
+
   const [selectedMovement, setSelectedMovement] = useState<PRMovement | null>(null);
   const [showAddMovement, setShowAddMovement] = useState(false);
   const [newMovementForm, setNewMovementForm] = useState({
@@ -205,6 +214,19 @@ export default function PRsScreen() {
                 onPress={handleSeedDefaults}
               >
                 <Text className="text-surface-400 text-xs font-semibold">Padrão</Text>
+              </TouchableOpacity>
+            )}
+            {movements.length > 0 && (
+              <TouchableOpacity
+                className="bg-surface-700 border border-surface-600/40 rounded-xl px-3 py-2.5"
+                onPress={() => recalc()}
+                disabled={recalcPending}
+              >
+                {recalcPending ? (
+                  <ActivityIndicator size="small" color="#72737f" />
+                ) : (
+                  <Ionicons name="refresh-outline" size={16} color="#72737f" />
+                )}
               </TouchableOpacity>
             )}
             <TouchableOpacity

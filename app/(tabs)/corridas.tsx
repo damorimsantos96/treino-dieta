@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -12,85 +12,180 @@ import {
   Platform,
   RefreshControl,
 } from "react-native";
-import { format, parseISO } from "date-fns";
+import { format, parseISO, subDays, subMonths } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { useRunSessions, useUpsertRunSession, useDeleteRunSession } from "@/hooks/useRunSessions";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { getRunSessions, upsertRunSession, deleteRunSession } from "@/lib/api";
 import { RunSession, IntervalType } from "@/types";
 import { formatPace, formatDuration } from "@/utils/calculations";
-import { SectionLabel } from "@/components/ui/Card";
+import { Ionicons } from "@expo/vector-icons";
+
+type PeriodKey = "7d" | "30d" | "3m" | "6m" | "12m";
+
+const PERIODS: { key: PeriodKey; label: string }[] = [
+  { key: "7d", label: "7d" },
+  { key: "30d", label: "30d" },
+  { key: "3m", label: "3m" },
+  { key: "6m", label: "6m" },
+  { key: "12m", label: "12m" },
+];
+
+function periodFrom(key: PeriodKey): Date {
+  const now = new Date();
+  if (key === "7d") return subDays(now, 7);
+  if (key === "30d") return subDays(now, 30);
+  if (key === "3m") return subMonths(now, 3);
+  if (key === "6m") return subMonths(now, 6);
+  return subMonths(now, 12);
+}
 
 const INTERVAL_TYPES: IntervalType[] = [
   "Easy", "Tempo", "Threshold", "Intervals", "VO2max", "Long Run", "Race", "Outro",
 ];
 
 const INTERVAL_COLORS: Record<IntervalType, { bg: string; text: string; border: string }> = {
-  Easy:      { bg: "rgba(34,197,94,0.12)",   text: "#22c55e", border: "rgba(34,197,94,0.25)"  },
-  Tempo:     { bg: "rgba(234,179,8,0.12)",   text: "#eab308", border: "rgba(234,179,8,0.25)"  },
-  Threshold: { bg: "rgba(249,115,22,0.12)",  text: "#f97316", border: "rgba(249,115,22,0.25)" },
-  Intervals: { bg: "rgba(239,68,68,0.12)",   text: "#ef4444", border: "rgba(239,68,68,0.25)"  },
-  VO2max:    { bg: "rgba(168,85,247,0.12)",  text: "#a855f7", border: "rgba(168,85,247,0.25)" },
-  "Long Run":{ bg: "rgba(59,130,246,0.12)",  text: "#3b82f6", border: "rgba(59,130,246,0.25)" },
-  Race:      { bg: "rgba(236,72,153,0.12)",  text: "#ec4899", border: "rgba(236,72,153,0.25)" },
-  Outro:     { bg: "rgba(113,113,127,0.12)", text: "#71717f", border: "rgba(113,113,127,0.25)"},
+  Easy:       { bg: "rgba(34,197,94,0.12)",   text: "#22c55e", border: "rgba(34,197,94,0.25)"  },
+  Tempo:      { bg: "rgba(234,179,8,0.12)",   text: "#eab308", border: "rgba(234,179,8,0.25)"  },
+  Threshold:  { bg: "rgba(249,115,22,0.12)",  text: "#f97316", border: "rgba(249,115,22,0.25)" },
+  Intervals:  { bg: "rgba(239,68,68,0.12)",   text: "#ef4444", border: "rgba(239,68,68,0.25)"  },
+  VO2max:     { bg: "rgba(168,85,247,0.12)",  text: "#a855f7", border: "rgba(168,85,247,0.25)" },
+  "Long Run": { bg: "rgba(59,130,246,0.12)",  text: "#3b82f6", border: "rgba(59,130,246,0.25)" },
+  Race:       { bg: "rgba(236,72,153,0.12)",  text: "#ec4899", border: "rgba(236,72,153,0.25)" },
+  Outro:      { bg: "rgba(113,113,127,0.12)", text: "#71717f", border: "rgba(113,113,127,0.25)"},
 };
 
-function SessionRow({ session, onDelete }: { session: RunSession; onDelete: (id: string) => void }) {
-  const date = parseISO(session.date);
-  const pace = session.pace_min_km ? formatPace(session.pace_min_km) : "—";
+function IntervalRow({ session, onDelete }: { session: RunSession; onDelete: () => void }) {
   const color = INTERVAL_COLORS[session.interval_type as IntervalType] ?? INTERVAL_COLORS.Outro;
+  const pace = session.pace_min_km && session.pace_min_km > 1 ? formatPace(session.pace_min_km) : null;
+  const duration = session.duration_min && session.duration_min > 0
+    ? formatDuration(session.duration_min)
+    : null;
 
   return (
     <TouchableOpacity
       onLongPress={() =>
-        Alert.alert("Excluir sessão?", "Esta ação não pode ser desfeita.", [
+        Alert.alert("Excluir intervalo?", "Esta ação não pode ser desfeita.", [
           { text: "Cancelar", style: "cancel" },
-          { text: "Excluir", style: "destructive", onPress: () => onDelete(session.id) },
+          { text: "Excluir", style: "destructive", onPress: onDelete },
         ])
       }
-      className="bg-surface-800 border border-surface-700/60 rounded-2xl px-4 py-3.5 mb-2.5"
+      className="flex-row items-center justify-between py-2.5 border-b border-surface-700/30"
     >
-      <View className="flex-row justify-between items-center mb-2">
-        <View className="flex-row items-center gap-2">
-          <View
-            className="px-2.5 py-1 rounded-lg border"
-            style={{ backgroundColor: color.bg, borderColor: color.border }}
-          >
-            <Text className="text-xs font-bold" style={{ color: color.text }}>
-              {session.interval_type}
-            </Text>
-          </View>
-          <Text className="text-surface-500 text-xs font-medium">
-            {format(date, "dd 'de' MMM", { locale: ptBR })}
+      <View className="flex-row items-center gap-2 flex-1">
+        <View
+          className="px-2 py-0.5 rounded-md border"
+          style={{ backgroundColor: color.bg, borderColor: color.border }}
+        >
+          <Text className="text-xs font-bold" style={{ color: color.text }}>
+            {session.interval_type}
           </Text>
         </View>
-        <Text className="text-white text-base font-bold">
-          {session.distance_km?.toFixed(2) ?? "—"} km
-        </Text>
+        <View className="flex-row gap-3">
+          {duration && (
+            <Text className="text-surface-500 text-xs">⏱ {duration}</Text>
+          )}
+          {pace && (
+            <Text className="text-surface-500 text-xs">🏃 {pace}/km</Text>
+          )}
+          {session.avg_hr && (
+            <Text className="text-surface-500 text-xs">❤️ {session.avg_hr} bpm</Text>
+          )}
+        </View>
       </View>
-      <View className="flex-row gap-4">
-        <Text className="text-surface-500 text-xs">
-          ⏱ {session.duration_min ? formatDuration(session.duration_min) : "—"}
-        </Text>
-        <Text className="text-surface-500 text-xs">🏃 {pace}/km</Text>
-        <Text className="text-surface-500 text-xs">❤️ {session.avg_hr ?? "—"} bpm</Text>
-        <Text className="text-surface-500 text-xs">
-          🔥 {session.calories_kcal ? Math.round(session.calories_kcal) : "—"} kcal
-        </Text>
-      </View>
+      <Text className="text-white text-sm font-bold ml-2">
+        {session.distance_km?.toFixed(2) ?? "—"} km
+      </Text>
     </TouchableOpacity>
   );
 }
 
-function SummaryRow({ sessions }: { sessions: RunSession[] }) {
+function DayCard({
+  date,
+  sessions,
+  onDelete,
+}: {
+  date: string;
+  sessions: RunSession[];
+  onDelete: (id: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
   const totalKm = sessions.reduce((s, r) => s + (r.distance_km ?? 0), 0);
-  const paces = sessions.filter((r) => r.pace_min_km).map((r) => r.pace_min_km!);
-  const avgPace = paces.length ? paces.reduce((a, b) => a + b, 0) / paces.length : 0;
-  const hrs = sessions.filter((r) => r.avg_hr).map((r) => r.avg_hr!);
-  const avgHr = hrs.length ? Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) : 0;
+  const totalDuration = sessions.reduce((s, r) => s + (r.duration_min ?? 0), 0);
+  const validHr = sessions.filter((r) => r.avg_hr);
+  const avgHr = validHr.length
+    ? Math.round(validHr.reduce((s, r) => s + r.avg_hr!, 0) / validHr.length)
+    : null;
+  const totalKcal = sessions.reduce((s, r) => s + (r.calories_kcal ?? 0), 0);
+
+  const parsed = parseISO(date);
+  const dateLabel = format(parsed, "d 'de' MMM", { locale: ptBR });
+
+  return (
+    <TouchableOpacity
+      onPress={() => setExpanded((v) => !v)}
+      className="bg-surface-800 border border-surface-700/60 rounded-2xl px-4 py-3.5 mb-2.5"
+      activeOpacity={0.75}
+    >
+      <View className="flex-row justify-between items-center">
+        <View className="flex-row items-center gap-2">
+          <Ionicons
+            name={expanded ? "chevron-down" : "chevron-forward"}
+            size={14}
+            color="#72737f"
+          />
+          <Text className="text-surface-400 text-sm font-medium">{dateLabel}</Text>
+          <View className="bg-surface-700/60 rounded-md px-1.5 py-0.5">
+            <Text className="text-surface-500 text-xs">{sessions.length} int.</Text>
+          </View>
+        </View>
+        <Text className="text-white text-base font-bold">{totalKm.toFixed(2)} km</Text>
+      </View>
+
+      <View className="flex-row gap-4 mt-2">
+        {totalDuration > 0 && (
+          <Text className="text-surface-500 text-xs">
+            ⏱ {formatDuration(totalDuration)}
+          </Text>
+        )}
+        {avgHr && (
+          <Text className="text-surface-500 text-xs">❤️ {avgHr} bpm</Text>
+        )}
+        {totalKcal > 0 && (
+          <Text className="text-surface-500 text-xs">
+            🔥 {Math.round(totalKcal)} kcal
+          </Text>
+        )}
+      </View>
+
+      {expanded && (
+        <View className="mt-3 border-t border-surface-700/40 pt-2 gap-0.5">
+          {sessions.map((s) => (
+            <IntervalRow key={s.id} session={s} onDelete={() => onDelete(s.id)} />
+          ))}
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+function SummaryBar({ sessions }: { sessions: RunSession[] }) {
+  const totalKm = sessions.reduce((s, r) => s + (r.distance_km ?? 0), 0);
+  const validPaces = sessions.filter((r) => r.pace_min_km && r.pace_min_km > 1);
+  const avgPace = validPaces.length
+    ? validPaces.reduce((a, r) => a + r.pace_min_km!, 0) / validPaces.length
+    : 0;
+  const validHr = sessions.filter((r) => r.avg_hr);
+  const avgHr = validHr.length
+    ? Math.round(validHr.reduce((a, r) => a + r.avg_hr!, 0) / validHr.length)
+    : 0;
+
+  // Count unique days
+  const uniqueDays = new Set(sessions.map((s) => s.date)).size;
 
   const stats = [
     { label: "km total", value: totalKm.toFixed(1), color: "text-brand-400" },
-    { label: "sessões", value: sessions.length.toString(), color: "text-sky-400" },
+    { label: "corridas", value: uniqueDays.toString(), color: "text-sky-400" },
     { label: "pace médio", value: avgPace ? formatPace(avgPace) : "—", color: "text-amber-400" },
     { label: "FC média", value: avgHr ? `${avgHr}` : "—", color: "text-rose-400" },
   ];
@@ -98,7 +193,10 @@ function SummaryRow({ sessions }: { sessions: RunSession[] }) {
   return (
     <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 flex-row mb-4">
       {stats.map((s, i) => (
-        <View key={i} className={`flex-1 items-center ${i < stats.length - 1 ? "border-r border-surface-700/50" : ""}`}>
+        <View
+          key={i}
+          className={`flex-1 items-center ${i < stats.length - 1 ? "border-r border-surface-700/50" : ""}`}
+        >
           <Text className={`text-xl font-bold ${s.color}`}>{s.value}</Text>
           <Text className="text-surface-500 text-xs mt-0.5">{s.label}</Text>
         </View>
@@ -108,9 +206,24 @@ function SummaryRow({ sessions }: { sessions: RunSession[] }) {
 }
 
 export default function CorridasScreen() {
-  const { data: sessions = [], isLoading, refetch, isRefetching } = useRunSessions(3);
-  const { mutateAsync: save, isPending: saving } = useUpsertRunSession();
-  const { mutateAsync: remove } = useDeleteRunSession();
+  const [period, setPeriod] = useState<PeriodKey>("3m");
+  const from = useMemo(() => periodFrom(period), [period]);
+
+  const qc = useQueryClient();
+  const { data: sessions = [], isLoading, refetch, isRefetching } = useQuery({
+    queryKey: ["run_sessions", period],
+    queryFn: () => getRunSessions(from, new Date(), 1000),
+  });
+
+  const { mutateAsync: save, isPending: saving } = useMutation({
+    mutationFn: upsertRunSession,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["run_sessions"] }),
+  });
+  const { mutateAsync: remove } = useMutation({
+    mutationFn: deleteRunSession,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["run_sessions"] }),
+  });
+
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({
     date: format(new Date(), "yyyy-MM-dd"),
@@ -120,6 +233,25 @@ export default function CorridasScreen() {
   function setF(k: string, v: string) {
     setForm((f) => ({ ...f, [k]: v }));
   }
+
+  // Group sessions by date
+  const grouped = useMemo(() => {
+    const map: Record<string, RunSession[]> = {};
+    for (const s of sessions) {
+      if (!map[s.date]) map[s.date] = [];
+      map[s.date].push(s);
+    }
+    // Sort intervals within each day by distance desc
+    for (const date of Object.keys(map)) {
+      map[date].sort((a, b) => (b.distance_km ?? 0) - (a.distance_km ?? 0));
+    }
+    return map;
+  }, [sessions]);
+
+  const sortedDates = useMemo(
+    () => Object.keys(grouped).sort((a, b) => b.localeCompare(a)),
+    [grouped]
+  );
 
   async function handleSave() {
     if (!form.interval_type) return;
@@ -138,8 +270,8 @@ export default function CorridasScreen() {
       });
       setShowModal(false);
       setForm({ date: format(new Date(), "yyyy-MM-dd"), interval_type: "Easy" });
-    } catch (err: any) {
-      Alert.alert("Erro", err.message);
+    } catch (err: unknown) {
+      Alert.alert("Erro", err instanceof Error ? err.message : "Tente novamente.");
     }
   }
 
@@ -151,48 +283,78 @@ export default function CorridasScreen() {
           <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#10b981" />
         }
       >
-        <View className="flex-row justify-between items-center mb-5">
+        {/* Header */}
+        <View className="flex-row justify-between items-center mb-4">
           <View>
             <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
-              Últimos 3 meses
+              Corridas
             </Text>
-            <Text className="text-white text-3xl font-bold tracking-tight">Corridas</Text>
+            <Text className="text-white text-3xl font-bold tracking-tight">Histórico</Text>
           </View>
           <TouchableOpacity
             className="bg-brand-500 rounded-xl px-4 py-2.5 border border-brand-600"
             onPress={() => setShowModal(true)}
             style={{ shadowColor: "#10b981", shadowOpacity: 0.25, shadowRadius: 8, elevation: 3 }}
           >
-            <Text className="text-white font-bold text-sm">+ Nova</Text>
+            <Text className="text-white font-bold text-sm">+ Intervalo</Text>
           </TouchableOpacity>
+        </View>
+
+        {/* Period selector */}
+        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1 mb-4">
+          {PERIODS.map(({ key, label }) => (
+            <TouchableOpacity
+              key={key}
+              className={`flex-1 py-2 rounded-xl items-center ${
+                period === key ? "bg-brand-500" : ""
+              }`}
+              onPress={() => setPeriod(key)}
+            >
+              <Text
+                className={`text-sm font-bold ${
+                  period === key ? "text-white" : "text-surface-500"
+                }`}
+              >
+                {label}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
         {isLoading ? (
           <ActivityIndicator color="#10b981" size="large" className="mt-12" />
         ) : (
           <>
-            <SummaryRow sessions={sessions} />
-            {sessions.map((s) => (
-              <SessionRow key={s.id} session={s} onDelete={(id) => remove(id)} />
+            {sessions.length > 0 && <SummaryBar sessions={sessions} />}
+            {sortedDates.map((date) => (
+              <DayCard
+                key={date}
+                date={date}
+                sessions={grouped[date]}
+                onDelete={(id) => remove(id)}
+              />
             ))}
             {sessions.length === 0 && (
               <View className="items-center py-16 gap-3">
                 <Text className="text-4xl">🏃</Text>
-                <Text className="text-white font-semibold">Nenhuma corrida registrada</Text>
-                <Text className="text-surface-500 text-sm">Toque em + Nova para adicionar</Text>
+                <Text className="text-white font-semibold">Nenhuma corrida neste período</Text>
+                <Text className="text-surface-500 text-sm">Toque em + Intervalo para adicionar</Text>
               </View>
             )}
           </>
         )}
       </ScrollView>
 
-      {/* Add session modal */}
+      {/* Add interval modal */}
       <Modal visible={showModal} animationType="slide" transparent>
         <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <View className="flex-1 justify-end">
             <View className="bg-surface-800 border border-surface-700/60 rounded-t-3xl px-5 pt-6 pb-10 gap-4">
               <View className="w-10 h-1 bg-surface-600 rounded-full self-center mb-2" />
-              <Text className="text-white text-xl font-bold">Nova sessão</Text>
+              <Text className="text-white text-xl font-bold">Novo intervalo</Text>
+              <Text className="text-surface-500 text-xs -mt-2">
+                Cada corrida é composta por vários intervalos nesta data.
+              </Text>
 
               {/* Date */}
               <View className="gap-1.5">
@@ -233,7 +395,7 @@ export default function CorridasScreen() {
                 </ScrollView>
               </View>
 
-              {/* Row 1 */}
+              {/* Row 1: distance / duration / pace */}
               <View className="flex-row gap-3">
                 {[
                   { key: "distance", label: "Distância", unit: "km" },
@@ -255,7 +417,7 @@ export default function CorridasScreen() {
                 ))}
               </View>
 
-              {/* Row 2 */}
+              {/* Row 2: hr / temp / kcal */}
               <View className="flex-row gap-3">
                 {[
                   { key: "avg_hr", label: "FC média", unit: "bpm" },
@@ -273,7 +435,7 @@ export default function CorridasScreen() {
                       placeholder="0"
                       placeholderTextColor="#4a4b58"
                     />
-                    {unit && <Text className="text-surface-600 text-xs">{unit}</Text>}
+                    {unit ? <Text className="text-surface-600 text-xs">{unit}</Text> : null}
                   </View>
                 ))}
               </View>

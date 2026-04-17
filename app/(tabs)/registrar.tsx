@@ -14,35 +14,60 @@ import { useFocusEffect } from "expo-router";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useDailyLog, useUpsertDailyLog } from "@/hooks/useDailyLog";
+import { useUserMetrics } from "@/hooks/useUserProfile";
 import { DailyLog } from "@/types";
 import { SectionLabel } from "@/components/ui/Card";
+import { computeDailyCalculations, formatWater } from "@/utils/calculations";
+import { Ionicons } from "@expo/vector-icons";
 
-type ActivityKey = "academia" | "boxe" | "surf" | "corrida" | "crossfit" | "musculacao";
+type ActivityKey = "academia" | "boxe" | "surf" | "ciclismo" | "crossfit" | "musculacao";
 
-const ACTIVITIES: { key: ActivityKey; label: string; icon: string }[] = [
-  { key: "academia", label: "Academia", icon: "🏋️" },
-  { key: "boxe", label: "Boxe", icon: "🥊" },
-  { key: "surf", label: "Surf", icon: "🏄" },
-  { key: "corrida", label: "Corrida", icon: "🏃" },
-  { key: "crossfit", label: "CrossFit", icon: "⚡" },
-  { key: "musculacao", label: "Musculação", icon: "💪" },
+const ACTIVITIES: {
+  key: ActivityKey;
+  label: string;
+  icon: string;
+  hasTempBpm: boolean;
+}[] = [
+  { key: "academia", label: "Academia", icon: "🏋️", hasTempBpm: true },
+  { key: "boxe", label: "Boxe", icon: "🥊", hasTempBpm: true },
+  { key: "surf", label: "Surf", icon: "🏄", hasTempBpm: true },
+  { key: "ciclismo", label: "Ciclismo", icon: "🚴", hasTempBpm: true },
+  { key: "crossfit", label: "CrossFit", icon: "⚡", hasTempBpm: false },
+  { key: "musculacao", label: "Musculação", icon: "💪", hasTempBpm: false },
 ];
-
-type ActivityFields = {
-  [K in ActivityKey as `kcal_${K}` | `min_${K}` | `temp_${K}` | `bpm_${K}`]: string;
-};
 
 type FormState = {
   weight: string;
   surplus: string;
-  protein_g: string;
-  carbs_g: string;
-  water_consumed_ml: string;
-  min_sauna: string;
-  temp_sauna: string;
-  bpm_sauna: string;
+  // academia
+  kcal_academia: string; min_academia: string; temp_academia: string; bpm_academia: string;
+  // boxe
+  kcal_boxe: string; min_boxe: string; temp_boxe: string; bpm_boxe: string;
+  // surf
+  kcal_surf: string; min_surf: string; temp_surf: string; bpm_surf: string;
+  // ciclismo
+  kcal_ciclismo: string; min_ciclismo: string; temp_ciclismo: string; bpm_ciclismo: string;
+  // crossfit (no temp/bpm in DB)
+  kcal_crossfit: string; min_crossfit: string;
+  // musculacao (no temp/bpm in DB)
+  kcal_musculacao: string; min_musculacao: string;
+  // sauna
+  min_sauna: string; temp_sauna: string; bpm_sauna: string;
+  // outros
   kcal_outros: string;
-} & ActivityFields;
+};
+
+const EMPTY_FORM: FormState = {
+  weight: "", surplus: "",
+  kcal_academia: "", min_academia: "", temp_academia: "", bpm_academia: "",
+  kcal_boxe: "", min_boxe: "", temp_boxe: "", bpm_boxe: "",
+  kcal_surf: "", min_surf: "", temp_surf: "", bpm_surf: "",
+  kcal_ciclismo: "", min_ciclismo: "", temp_ciclismo: "", bpm_ciclismo: "",
+  kcal_crossfit: "", min_crossfit: "",
+  kcal_musculacao: "", min_musculacao: "",
+  min_sauna: "", temp_sauna: "", bpm_sauna: "",
+  kcal_outros: "",
+};
 
 function NumInput({
   label,
@@ -79,6 +104,18 @@ function NumInput({
   );
 }
 
+function TargetRow({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <View className="flex-row items-center justify-between py-2.5 border-b border-surface-700/40">
+      <View className="flex-row items-center gap-2">
+        <Text className="text-base">{icon}</Text>
+        <Text className="text-surface-400 text-sm">{label}</Text>
+      </View>
+      <Text className="text-white text-sm font-bold">{value}</Text>
+    </View>
+  );
+}
+
 function num(v: string): number | null {
   const n = parseFloat(v.replace(",", "."));
   return isNaN(n) ? null : n;
@@ -88,19 +125,10 @@ function str(v: number | null | undefined): string {
   return v != null ? v.toString() : "";
 }
 
-const EMPTY_FORM: FormState = {
-  weight: "", surplus: "", protein_g: "", carbs_g: "", water_consumed_ml: "",
-  min_sauna: "", temp_sauna: "", bpm_sauna: "", kcal_outros: "",
-  kcal_academia: "", min_academia: "", temp_academia: "", bpm_academia: "",
-  kcal_boxe: "", min_boxe: "", temp_boxe: "", bpm_boxe: "",
-  kcal_surf: "", min_surf: "", temp_surf: "", bpm_surf: "",
-  kcal_corrida: "", min_corrida: "", temp_corrida: "", bpm_corrida: "",
-  kcal_crossfit: "", min_crossfit: "", temp_crossfit: "", bpm_crossfit: "",
-  kcal_musculacao: "", min_musculacao: "", temp_musculacao: "", bpm_musculacao: "",
-};
-
 export default function RegistrarScreen() {
   const [today, setToday] = useState(() => new Date());
+  const [saunaOpen, setSaunaOpen] = useState(false);
+  const [outrosOpen, setOutrosOpen] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -110,6 +138,7 @@ export default function RegistrarScreen() {
 
   const { data: existing, isLoading } = useDailyLog(today);
   const { mutateAsync: save, isPending } = useUpsertDailyLog();
+  const userMetrics = useUserMetrics();
 
   const [selectedActivities, setSelectedActivities] = useState<Set<ActivityKey>>(new Set());
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -123,33 +152,25 @@ export default function RegistrarScreen() {
       }
       const active = new Set<ActivityKey>();
       ACTIVITIES.forEach(({ key }) => {
-        const minKey = `min_${key}` as keyof DailyLog;
-        const val = existing[minKey];
+        const val = existing[`min_${key}` as keyof DailyLog];
         if (typeof val === "number" && val > 0) active.add(key);
       });
       setSelectedActivities(active);
       setForm({
         weight: str(existing.weight_kg),
         surplus: str(existing.surplus_deficit_kcal),
-        protein_g: str(existing.protein_g),
-        carbs_g: str(existing.carbs_g),
-        water_consumed_ml: str(existing.water_consumed_ml),
-        min_sauna: str(existing.min_sauna),
-        temp_sauna: str(existing.temp_sauna),
-        bpm_sauna: str(existing.bpm_sauna),
-        kcal_outros: str(existing.kcal_outros),
         kcal_academia: str(existing.kcal_academia), min_academia: str(existing.min_academia),
         temp_academia: str(existing.temp_academia), bpm_academia: str(existing.bpm_academia),
         kcal_boxe: str(existing.kcal_boxe), min_boxe: str(existing.min_boxe),
         temp_boxe: str(existing.temp_boxe), bpm_boxe: str(existing.bpm_boxe),
         kcal_surf: str(existing.kcal_surf), min_surf: str(existing.min_surf),
         temp_surf: str(existing.temp_surf), bpm_surf: str(existing.bpm_surf),
-        kcal_corrida: str(existing.kcal_corrida), min_corrida: str(existing.min_corrida),
-        temp_corrida: str(existing.temp_corrida), bpm_corrida: str(existing.bpm_corrida),
+        kcal_ciclismo: str(existing.kcal_ciclismo), min_ciclismo: str(existing.min_ciclismo),
+        temp_ciclismo: str(existing.temp_ciclismo), bpm_ciclismo: str(existing.bpm_ciclismo),
         kcal_crossfit: str(existing.kcal_crossfit), min_crossfit: str(existing.min_crossfit),
-        temp_crossfit: str(existing.temp_crossfit), bpm_crossfit: str(existing.bpm_crossfit),
         kcal_musculacao: str(existing.kcal_musculacao), min_musculacao: str(existing.min_musculacao),
-        temp_musculacao: str(existing.temp_musculacao), bpm_musculacao: str(existing.bpm_musculacao),
+        min_sauna: str(existing.min_sauna), temp_sauna: str(existing.temp_sauna),
+        bpm_sauna: str(existing.bpm_sauna), kcal_outros: str(existing.kcal_outros),
       });
     }, [existing])
   );
@@ -167,26 +188,63 @@ export default function RegistrarScreen() {
     });
   }
 
+  // Build a preview log to compute targets
+  const weightNum = num(form.weight) ?? existing?.weight_kg ?? null;
+  const previewLog: DailyLog = {
+    id: "", user_id: "", date: format(today, "yyyy-MM-dd"),
+    weight_kg: weightNum,
+    kcal_academia: selectedActivities.has("academia") ? num(form.kcal_academia) : null,
+    min_academia: selectedActivities.has("academia") ? num(form.min_academia) : null,
+    temp_academia: selectedActivities.has("academia") ? num(form.temp_academia) : null,
+    bpm_academia: selectedActivities.has("academia") ? num(form.bpm_academia) : null,
+    kcal_boxe: selectedActivities.has("boxe") ? num(form.kcal_boxe) : null,
+    min_boxe: selectedActivities.has("boxe") ? num(form.min_boxe) : null,
+    temp_boxe: selectedActivities.has("boxe") ? num(form.temp_boxe) : null,
+    bpm_boxe: selectedActivities.has("boxe") ? num(form.bpm_boxe) : null,
+    kcal_surf: selectedActivities.has("surf") ? num(form.kcal_surf) : null,
+    min_surf: selectedActivities.has("surf") ? num(form.min_surf) : null,
+    temp_surf: selectedActivities.has("surf") ? num(form.temp_surf) : null,
+    bpm_surf: selectedActivities.has("surf") ? num(form.bpm_surf) : null,
+    kcal_ciclismo: selectedActivities.has("ciclismo") ? num(form.kcal_ciclismo) : null,
+    min_ciclismo: selectedActivities.has("ciclismo") ? num(form.min_ciclismo) : null,
+    temp_ciclismo: selectedActivities.has("ciclismo") ? num(form.temp_ciclismo) : null,
+    bpm_ciclismo: selectedActivities.has("ciclismo") ? num(form.bpm_ciclismo) : null,
+    kcal_crossfit: selectedActivities.has("crossfit") ? num(form.kcal_crossfit) : null,
+    min_crossfit: selectedActivities.has("crossfit") ? num(form.min_crossfit) : null,
+    kcal_musculacao: selectedActivities.has("musculacao") ? num(form.kcal_musculacao) : null,
+    min_musculacao: selectedActivities.has("musculacao") ? num(form.min_musculacao) : null,
+    kcal_corrida: null, min_corrida: null, temp_corrida: null, bpm_corrida: null,
+    kcal_outros: num(form.kcal_outros),
+    min_sauna: num(form.min_sauna), temp_sauna: num(form.temp_sauna), bpm_sauna: num(form.bpm_sauna),
+    surplus_deficit_kcal: num(form.surplus),
+    protein_g: null, carbs_g: null, water_consumed_ml: null,
+    whoop_strain: existing?.whoop_strain ?? null,
+    whoop_recovery: existing?.whoop_recovery ?? null,
+    whoop_kcal: existing?.whoop_kcal ?? null,
+    created_at: "", updated_at: "",
+  };
+
+  const targets = weightNum ? computeDailyCalculations(previewLog, today, userMetrics) : null;
+
   async function handleSave() {
     const payload: Partial<DailyLog> & { date: string } = {
       date: format(today, "yyyy-MM-dd"),
       weight_kg: num(form.weight),
       surplus_deficit_kcal: num(form.surplus),
-      protein_g: num(form.protein_g),
-      carbs_g: num(form.carbs_g),
-      water_consumed_ml: num(form.water_consumed_ml),
       min_sauna: num(form.min_sauna),
       temp_sauna: num(form.temp_sauna),
       bpm_sauna: num(form.bpm_sauna),
       kcal_outros: num(form.kcal_outros),
     };
 
-    ACTIVITIES.forEach(({ key }) => {
+    ACTIVITIES.forEach(({ key, hasTempBpm }) => {
       const active = selectedActivities.has(key);
-      payload[`kcal_${key}` as keyof DailyLog] = active ? num(form[`kcal_${key}` as keyof FormState]) : null as never;
-      payload[`min_${key}` as keyof DailyLog] = active ? num(form[`min_${key}` as keyof FormState]) : null as never;
-      payload[`temp_${key}` as keyof DailyLog] = active ? num(form[`temp_${key}` as keyof FormState]) : null as never;
-      payload[`bpm_${key}` as keyof DailyLog] = active ? num(form[`bpm_${key}` as keyof FormState]) : null as never;
+      (payload as any)[`kcal_${key}`] = active ? num(form[`kcal_${key}` as keyof FormState]) : null;
+      (payload as any)[`min_${key}`] = active ? num(form[`min_${key}` as keyof FormState]) : null;
+      if (hasTempBpm) {
+        (payload as any)[`temp_${key}`] = active ? num(form[`temp_${key}` as keyof FormState]) : null;
+        (payload as any)[`bpm_${key}`] = active ? num(form[`bpm_${key}` as keyof FormState]) : null;
+      }
     });
 
     try {
@@ -247,29 +305,21 @@ export default function RegistrarScreen() {
           </View>
         </View>
 
-        {/* ── Nutrição ──────────────────────────────────── */}
-        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 gap-3">
+        {/* ── Nutrição (metas calculadas) ────────────────── */}
+        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 gap-1">
           <SectionLabel label="Nutrição 🥗" />
-          <View className="flex-row gap-3">
-            <NumInput
-              label="Proteína"
-              value={form.protein_g}
-              onChange={(v) => set("protein_g", v)}
-              unit="g"
-            />
-            <NumInput
-              label="Carboidrato"
-              value={form.carbs_g}
-              onChange={(v) => set("carbs_g", v)}
-              unit="g"
-            />
-          </View>
-          <NumInput
-            label="Água consumida"
-            value={form.water_consumed_ml}
-            onChange={(v) => set("water_consumed_ml", v)}
-            unit="ml"
-          />
+          {targets ? (
+            <>
+              <TargetRow icon="🥩" label="Proteína mínima" value={`${Math.round(targets.min_protein_g)} g`} />
+              <TargetRow icon="🍚" label="Carboidrato mínimo" value={`${Math.round(targets.min_carb_g)} g`} />
+              <TargetRow icon="💧" label="Água necessária" value={formatWater(targets.water_ml)} />
+              <TargetRow icon="🔥" label="TDEE estimado" value={`${Math.round(targets.tdee_kcal).toLocaleString()} kcal`} />
+            </>
+          ) : (
+            <Text className="text-surface-500 text-sm py-2">
+              Informe o peso para ver as metas de nutrição.
+            </Text>
+          )}
         </View>
 
         {/* ── Atividades ────────────────────────────────── */}
@@ -289,11 +339,7 @@ export default function RegistrarScreen() {
                   }`}
                 >
                   <Text className="text-sm">{icon}</Text>
-                  <Text
-                    className={`text-sm font-semibold ${
-                      active ? "text-white" : "text-surface-500"
-                    }`}
-                  >
+                  <Text className={`text-sm font-semibold ${active ? "text-white" : "text-surface-500"}`}>
                     {label}
                   </Text>
                 </TouchableOpacity>
@@ -302,80 +348,92 @@ export default function RegistrarScreen() {
           </View>
 
           {ACTIVITIES.filter(({ key }) => selectedActivities.has(key)).map(
-            ({ key, label, icon }) => (
+            ({ key, label, icon, hasTempBpm }) => (
               <View key={key} className="border-t border-surface-700/50 pt-3 gap-2">
-                <Text className="text-white text-sm font-bold">
-                  {icon} {label}
-                </Text>
+                <Text className="text-white text-sm font-bold">{icon} {label}</Text>
                 <View className="flex-row gap-2">
                   <NumInput
                     label="kcal"
-                    value={form[`kcal_${key}`]}
-                    onChange={(v) => set(`kcal_${key}`, v)}
+                    value={form[`kcal_${key}` as keyof FormState]}
+                    onChange={(v) => set(`kcal_${key}` as keyof FormState, v)}
                     unit="kcal"
                   />
                   <NumInput
                     label="Duração"
-                    value={form[`min_${key}`]}
-                    onChange={(v) => set(`min_${key}`, v)}
+                    value={form[`min_${key}` as keyof FormState]}
+                    onChange={(v) => set(`min_${key}` as keyof FormState, v)}
                     unit="min"
                   />
                 </View>
-                <View className="flex-row gap-2">
-                  <NumInput
-                    label="Temperatura"
-                    value={form[`temp_${key}`]}
-                    onChange={(v) => set(`temp_${key}`, v)}
-                    unit="°C"
-                    decimal
-                  />
-                  <NumInput
-                    label="FC média"
-                    value={form[`bpm_${key}`]}
-                    onChange={(v) => set(`bpm_${key}`, v)}
-                    unit="bpm"
-                  />
-                </View>
+                {hasTempBpm && (
+                  <View className="flex-row gap-2">
+                    <NumInput
+                      label="Temperatura"
+                      value={form[`temp_${key}` as keyof FormState]}
+                      onChange={(v) => set(`temp_${key}` as keyof FormState, v)}
+                      unit="°C"
+                      decimal
+                    />
+                    <NumInput
+                      label="FC média"
+                      value={form[`bpm_${key}` as keyof FormState]}
+                      onChange={(v) => set(`bpm_${key}` as keyof FormState, v)}
+                      unit="bpm"
+                    />
+                  </View>
+                )}
               </View>
             )
           )}
         </View>
 
-        {/* ── Sauna ────────────────────────────────────── */}
-        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 gap-3">
-          <SectionLabel label="Sauna 🧖" />
-          <View className="flex-row gap-2">
-            <NumInput
-              label="Duração"
-              value={form.min_sauna}
-              onChange={(v) => set("min_sauna", v)}
-              unit="min"
+        {/* ── Sauna (colapsável) ────────────────────────── */}
+        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl overflow-hidden">
+          <TouchableOpacity
+            onPress={() => setSaunaOpen((v) => !v)}
+            className="flex-row items-center justify-between p-4"
+          >
+            <SectionLabel label="Sauna 🧖" />
+            <Ionicons
+              name={saunaOpen ? "chevron-up" : "chevron-down"}
+              size={16}
+              color="#72737f"
             />
-            <NumInput
-              label="Temperatura"
-              value={form.temp_sauna}
-              onChange={(v) => set("temp_sauna", v)}
-              unit="°C"
-              decimal
-            />
-            <NumInput
-              label="FC média"
-              value={form.bpm_sauna}
-              onChange={(v) => set("bpm_sauna", v)}
-              unit="bpm"
-            />
-          </View>
+          </TouchableOpacity>
+          {saunaOpen && (
+            <View className="px-4 pb-4 gap-2">
+              <View className="flex-row gap-2">
+                <NumInput label="Duração" value={form.min_sauna} onChange={(v) => set("min_sauna", v)} unit="min" />
+                <NumInput label="Temperatura" value={form.temp_sauna} onChange={(v) => set("temp_sauna", v)} unit="°C" decimal />
+                <NumInput label="FC média" value={form.bpm_sauna} onChange={(v) => set("bpm_sauna", v)} unit="bpm" />
+              </View>
+            </View>
+          )}
         </View>
 
-        {/* ── Outros ───────────────────────────────────── */}
-        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 gap-3">
-          <SectionLabel label="Outros" />
-          <NumInput
-            label="Kcal outras atividades"
-            value={form.kcal_outros}
-            onChange={(v) => set("kcal_outros", v)}
-            unit="kcal"
-          />
+        {/* ── Outros (colapsável) ───────────────────────── */}
+        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl overflow-hidden">
+          <TouchableOpacity
+            onPress={() => setOutrosOpen((v) => !v)}
+            className="flex-row items-center justify-between p-4"
+          >
+            <SectionLabel label="Outros" />
+            <Ionicons
+              name={outrosOpen ? "chevron-up" : "chevron-down"}
+              size={16}
+              color="#72737f"
+            />
+          </TouchableOpacity>
+          {outrosOpen && (
+            <View className="px-4 pb-4">
+              <NumInput
+                label="Kcal outras atividades"
+                value={form.kcal_outros}
+                onChange={(v) => set("kcal_outros", v)}
+                unit="kcal"
+              />
+            </View>
+          )}
         </View>
 
         {/* ── Save ─────────────────────────────────────── */}

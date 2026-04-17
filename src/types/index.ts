@@ -21,6 +21,7 @@ export interface DailyLog {
   kcal_corrida: number | null;
   kcal_crossfit: number | null;
   kcal_musculacao: number | null;
+  kcal_ciclismo: number | null;
   kcal_outros: number | null;
 
   // Duration by activity (minutes)
@@ -30,6 +31,7 @@ export interface DailyLog {
   min_corrida: number | null;
   min_crossfit: number | null;
   min_musculacao: number | null;
+  min_ciclismo: number | null;
   min_sauna: number | null;
 
   // Temperature by activity (°C)
@@ -37,6 +39,7 @@ export interface DailyLog {
   temp_boxe: number | null;
   temp_surf: number | null;
   temp_corrida: number | null;
+  temp_ciclismo: number | null;
   temp_sauna: number | null;
 
   // Heart rate by activity (bpm)
@@ -44,12 +47,13 @@ export interface DailyLog {
   bpm_boxe: number | null;
   bpm_surf: number | null;
   bpm_corrida: number | null;
+  bpm_ciclismo: number | null;
   bpm_sauna: number | null;
 
   // Manual input
   surplus_deficit_kcal: number | null;
 
-  // Nutrition consumed (manual)
+  // Nutrition targets (read-only, not user-entered)
   protein_g: number | null;
   carbs_g: number | null;
   water_consumed_ml: number | null;

@@ -1,0 +1,5 @@
+ALTER TABLE daily_logs
+  ADD COLUMN IF NOT EXISTS kcal_ciclismo  NUMERIC(7,1),
+  ADD COLUMN IF NOT EXISTS min_ciclismo   NUMERIC(6,1),
+  ADD COLUMN IF NOT EXISTS bpm_ciclismo   SMALLINT,
+  ADD COLUMN IF NOT EXISTS temp_ciclismo  NUMERIC(4,1);

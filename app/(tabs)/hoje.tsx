@@ -14,7 +14,6 @@ import { useDailyLog } from "@/hooks/useDailyLog";
 import { useUserMetrics } from "@/hooks/useUserProfile";
 import { computeDailyCalculations, formatWater, formatDuration } from "@/utils/calculations";
 import { MetricCard } from "@/components/ui/MetricCard";
-import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Card, SectionLabel } from "@/components/ui/Card";
 import { Ionicons } from "@expo/vector-icons";
 import { DailyLog } from "@/types";
@@ -25,6 +24,7 @@ const ACTIVITIES: ActivityEntry[] = [
   { label: "Academia", key: "kcal_academia", icon: "🏋️" },
   { label: "Boxe", key: "kcal_boxe", icon: "🥊" },
   { label: "Surf", key: "kcal_surf", icon: "🏄" },
+  { label: "Ciclismo", key: "kcal_ciclismo", icon: "🚴" },
   { label: "Corrida", key: "kcal_corrida", icon: "🏃" },
   { label: "CrossFit", key: "kcal_crossfit", icon: "⚡" },
   { label: "Musculação", key: "kcal_musculacao", icon: "💪" },
@@ -102,7 +102,6 @@ export default function HojeScreen() {
           <ActivityIndicator color="#10b981" size="large" />
         </View>
       ) : !log ? (
-        /* ── Empty state ─────────────────────────────────── */
         <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-8 items-center gap-4">
           <View className="w-16 h-16 rounded-2xl bg-brand-500/10 border border-brand-500/20 items-center justify-center">
             <Text className="text-3xl">📋</Text>
@@ -110,7 +109,7 @@ export default function HojeScreen() {
           <View className="items-center gap-1">
             <Text className="text-white text-base font-bold">Nenhum dado hoje</Text>
             <Text className="text-surface-500 text-sm text-center">
-              Registre seu treino e alimentação para ver as métricas
+              Registre seu treino para ver as métricas
             </Text>
           </View>
           <TouchableOpacity
@@ -165,7 +164,6 @@ export default function HojeScreen() {
               </View>
             </View>
 
-            {/* Activity pills */}
             {(() => {
               const active = ACTIVITIES.filter((a) => {
                 const val = log[a.key];
@@ -196,70 +194,48 @@ export default function HojeScreen() {
             })()}
           </Card>
 
-          {/* ── Metas do dia ─────────────────────────────── */}
-          <Card className="gap-4">
-            <SectionLabel label="Metas do Dia" />
-            <ProgressBar
-              label="Proteína mínima"
-              icon="🥩"
-              current={log.protein_g ?? 0}
-              target={calc?.min_protein_g ?? 0}
-              unit="g"
-              barColor="#f43f5e"
-            />
-            <ProgressBar
-              label="Carboidrato mínimo"
-              icon="🍚"
-              current={log.carbs_g ?? 0}
-              target={calc?.min_carb_g ?? 0}
-              unit="g"
-              barColor="#f59e0b"
-            />
-            <ProgressBar
-              label="Hidratação"
-              icon="💧"
-              current={log.water_consumed_ml ?? 0}
-              target={calc?.water_ml ?? 0}
-              unit="ml"
-              barColor="#38bdf8"
-            />
-          </Card>
+          {/* ── Metas de Nutrição ────────────────────────── */}
+          {calc && (
+            <Card className="gap-3">
+              <SectionLabel label="Metas de Nutrição" />
+              <View className="flex-row gap-3">
+                <View className="flex-1 bg-rose-500/8 border border-rose-500/20 rounded-xl p-3 items-center gap-1">
+                  <Text className="text-xl">🥩</Text>
+                  <Text className="text-rose-400 text-lg font-bold">{Math.round(calc.min_protein_g)}g</Text>
+                  <Text className="text-surface-500 text-xs text-center">Proteína mín.</Text>
+                </View>
+                <View className="flex-1 bg-amber-500/8 border border-amber-500/20 rounded-xl p-3 items-center gap-1">
+                  <Text className="text-xl">🍚</Text>
+                  <Text className="text-amber-400 text-lg font-bold">{Math.round(calc.min_carb_g)}g</Text>
+                  <Text className="text-surface-500 text-xs text-center">Carbo mín.</Text>
+                </View>
+                <View className="flex-1 bg-sky-500/8 border border-sky-500/20 rounded-xl p-3 items-center gap-1">
+                  <Text className="text-xl">💧</Text>
+                  <Text className="text-sky-400 text-lg font-bold">{formatWater(calc.water_ml)}</Text>
+                  <Text className="text-surface-500 text-xs text-center">Água neces.</Text>
+                </View>
+              </View>
+            </Card>
+          )}
 
           {/* ── Métricas grid bento ──────────────────────── */}
           <View className="flex-row flex-wrap gap-3">
             <MetricCard
-              label="Água necessária"
-              value={formatWater(calc?.water_ml ?? 0)}
-              icon="💧"
-              valueColor="text-sky-400"
-              tint="bg-sky-500/8"
-              border="border-sky-500/20"
-            />
-            <MetricCard
-              label="Proteína mínima"
-              value={Math.round(calc?.min_protein_g ?? 0).toString()}
-              unit="g"
-              icon="🥩"
-              valueColor="text-rose-400"
-              tint="bg-rose-500/8"
-              border="border-rose-500/20"
-            />
-            <MetricCard
-              label="Carbo mínimo"
-              value={Math.round(calc?.min_carb_g ?? 0).toString()}
-              unit="g"
-              icon="🍚"
-              valueColor="text-amber-400"
-              tint="bg-amber-500/8"
-              border="border-amber-500/20"
-            />
-            <MetricCard
-              label="Atividade"
+              label="Atividade total"
               value={formatDuration(calc?.total_activity_min ?? 0)}
               icon="⏱️"
               valueColor="text-brand-400"
               tint="bg-brand-500/8"
               border="border-brand-500/20"
+            />
+            <MetricCard
+              label="Kcal atividade"
+              value={Math.round(calc?.total_activity_kcal ?? 0).toLocaleString()}
+              unit="kcal"
+              icon="🔥"
+              valueColor="text-orange-400"
+              tint="bg-orange-500/8"
+              border="border-orange-500/20"
             />
           </View>
 
@@ -275,13 +251,9 @@ export default function HojeScreen() {
                     {log.whoop_strain.toFixed(1)}
                   </Text>
                   <Text className="text-surface-500 text-xs mt-1">
-                    {log.whoop_strain >= 18
-                      ? "Carga muito alta"
-                      : log.whoop_strain >= 14
-                      ? "Carga alta"
-                      : log.whoop_strain >= 10
-                      ? "Moderado"
-                      : "Leve"}
+                    {log.whoop_strain >= 18 ? "Carga muito alta"
+                      : log.whoop_strain >= 14 ? "Carga alta"
+                      : log.whoop_strain >= 10 ? "Moderado" : "Leve"}
                   </Text>
                 </View>
               )}
@@ -303,11 +275,8 @@ export default function HojeScreen() {
                     {log.whoop_recovery}%
                   </Text>
                   <Text className="text-surface-500 text-xs mt-1">
-                    {log.whoop_recovery >= 67
-                      ? "Bem recuperado"
-                      : log.whoop_recovery >= 34
-                      ? "Moderado"
-                      : "Pouco recuperado"}
+                    {log.whoop_recovery >= 67 ? "Bem recuperado"
+                      : log.whoop_recovery >= 34 ? "Moderado" : "Pouco recuperado"}
                   </Text>
                 </View>
               )}

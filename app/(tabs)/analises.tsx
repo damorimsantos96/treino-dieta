@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -160,28 +160,49 @@ function StatRow({ label, value, valueColor }: { label: string; value: string; v
 export default function AnalisesScreen() {
   const [period, setPeriod] = useState<Period>("30d");
   const from = periodToDate(period);
+  const now = useMemo(() => new Date(), []);
 
+  // Activity/run data uses the selected period
   const { data: logs = [], isLoading: loadingLogs } = useQuery({
     queryKey: ["daily_logs", period],
-    queryFn: () => getDailyLogs(from, new Date()),
+    queryFn: () => getDailyLogs(from, now),
+  });
+
+  // Weight uses a fixed 2-year window — independent of period selector
+  const weightFrom = useMemo(() => subMonths(now, 24), [now]);
+  const { data: weightLogs = [], isLoading: loadingWeight } = useQuery({
+    queryKey: ["daily_logs_weight_2y"],
+    queryFn: () => getDailyLogs(weightFrom, now),
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: runs = [], isLoading: loadingRuns } = useQuery({
     queryKey: ["run_sessions", period],
-    queryFn: () => getRunSessions(from, new Date(), 500),
+    queryFn: () => getRunSessions(from, now, 500),
   });
 
   const userMetrics = useUserMetrics();
-  const isLoading = loadingLogs || loadingRuns;
+  const isLoading = loadingLogs || loadingRuns || loadingWeight;
 
-  const weightData = logs
+  // Weight data from full 2-year window
+  const weightData = weightLogs
     .filter((l) => l.weight_kg)
     .reverse()
     .map((l) => l.weight_kg!);
 
   const latestWeight = weightData[weightData.length - 1];
-  const firstWeight = weightData[0];
-  const weightDelta = latestWeight && firstWeight ? latestWeight - firstWeight : 0;
+
+  // Weight stats use the selected period
+  const weightInPeriod = logs
+    .filter((l) => l.weight_kg)
+    .reverse()
+    .map((l) => l.weight_kg!);
+  const firstWeightInPeriod = weightInPeriod[0];
+  const lastWeightInPeriod = weightInPeriod[weightInPeriod.length - 1];
+  const weightDelta =
+    lastWeightInPeriod && firstWeightInPeriod
+      ? lastWeightInPeriod - firstWeightInPeriod
+      : 0;
 
   const weightMa7 = weightData.map((_, i) => {
     const slice = weightData.slice(Math.max(0, i - 6), i + 1);
@@ -201,12 +222,12 @@ export default function AnalisesScreen() {
     : 0;
 
   const totalKm = runs.reduce((s, r) => s + (r.distance_km ?? 0), 0);
-  const validPaces = runs.filter((r) => r.pace_min_km);
+  const validPaces = runs.filter((r) => r.pace_min_km && r.pace_min_km > 1);
   const avgPace = validPaces.length
     ? validPaces.reduce((s, r) => s + r.pace_min_km!, 0) / validPaces.length
     : 0;
 
-  const weeklyKm = eachWeekOfInterval({ start: from, end: new Date() }).map((week) => {
+  const weeklyKm = eachWeekOfInterval({ start: from, end: now }).map((week) => {
     const wEnd = endOfWeek(week);
     const weekRuns = runs.filter((r) => {
       const d = parseISO(r.date);
@@ -221,7 +242,8 @@ export default function AnalisesScreen() {
   const trainingDays = logs.filter((l) => {
     return (
       (l.min_academia ?? 0) + (l.min_boxe ?? 0) + (l.min_surf ?? 0) +
-      (l.min_corrida ?? 0) + (l.min_crossfit ?? 0) + (l.min_musculacao ?? 0) > 0
+      (l.min_corrida ?? 0) + (l.min_crossfit ?? 0) + (l.min_musculacao ?? 0) +
+      (l.min_ciclismo ?? 0) > 0
     );
   }).length;
 
@@ -262,7 +284,7 @@ export default function AnalisesScreen() {
         <ActivityIndicator color="#10b981" size="large" className="mt-12" />
       ) : (
         <>
-          {/* ── Peso ─────────────────────────────────────── */}
+          {/* ── Peso ─────────────────────────────────────────── */}
           <Card className="gap-4">
             <SectionLabel label="Peso" />
             {weightData.length > 1 ? (
@@ -274,21 +296,25 @@ export default function AnalisesScreen() {
                   valueColor="text-brand-400"
                 />
                 <StatRow
-                  label="Variação no período"
-                  value={`${weightDelta >= 0 ? "+" : ""}${weightDelta.toFixed(1)} kg`}
+                  label={`Variação (${period})`}
+                  value={
+                    weightDelta !== 0
+                      ? `${weightDelta >= 0 ? "+" : ""}${weightDelta.toFixed(1)} kg`
+                      : "Sem dados no período"
+                  }
                   valueColor={weightDelta <= 0 ? "text-brand-400" : "text-amber-400"}
                 />
                 <StatRow
-                  label="Menor"
+                  label="Menor (2 anos)"
                   value={`${Math.min(...weightData).toFixed(1)} kg`}
                 />
                 <StatRow
-                  label="Maior"
+                  label="Maior (2 anos)"
                   value={`${Math.max(...weightData).toFixed(1)} kg`}
                 />
               </>
             ) : (
-              <Text className="text-surface-500 text-sm">Dados insuficientes para exibir gráfico.</Text>
+              <Text className="text-surface-500 text-sm">Nenhum peso registrado nos últimos 2 anos.</Text>
             )}
           </Card>
 
@@ -316,7 +342,7 @@ export default function AnalisesScreen() {
           {/* ── Corridas ─────────────────────────────────── */}
           <Card className="gap-4">
             <SectionLabel label="Corridas" />
-            {weeklyKm.length > 0 ? (
+            {runs.length > 0 ? (
               <>
                 <SimpleBarChart data={weeklyKm} color="#3b82f6" />
                 <StatRow
@@ -324,7 +350,7 @@ export default function AnalisesScreen() {
                   value={`${totalKm.toFixed(1)} km`}
                   valueColor="text-sky-400"
                 />
-                <StatRow label="Sessões" value={`${runs.length}`} />
+                <StatRow label="Intervalos" value={`${runs.length}`} />
                 <StatRow
                   label="Pace médio"
                   value={
@@ -360,6 +386,7 @@ export default function AnalisesScreen() {
                 { label: "Academia", key: "min_academia", color: "#a855f7" },
                 { label: "Boxe", key: "min_boxe", color: "#ef4444" },
                 { label: "Surf", key: "min_surf", color: "#06b6d4" },
+                { label: "Ciclismo", key: "min_ciclismo", color: "#10b981" },
                 { label: "CrossFit", key: "min_crossfit", color: "#f59e0b" },
                 { label: "Musculação", key: "min_musculacao", color: "#8b5cf6" },
               ]
