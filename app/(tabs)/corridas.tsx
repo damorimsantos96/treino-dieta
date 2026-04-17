@@ -15,7 +15,7 @@ import {
 import { format, parseISO, subDays, subMonths } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getRunSessions, upsertRunSession, deleteRunSession } from "@/lib/api";
+import { getRunSessions, upsertRunSession, deleteRunSession, syncRunSessionsToDaily } from "@/lib/api";
 import { RunSession, IntervalType } from "@/types";
 import { formatPace, formatDuration } from "@/utils/calculations";
 import { Ionicons } from "@expo/vector-icons";
@@ -106,7 +106,7 @@ function DayCard({
 }: {
   date: string;
   sessions: RunSession[];
-  onDelete: (id: string) => void;
+  onDelete: (id: string, date: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -161,7 +161,7 @@ function DayCard({
       {expanded && (
         <View className="mt-3 border-t border-surface-700/40 pt-2 gap-0.5">
           {sessions.map((s) => (
-            <IntervalRow key={s.id} session={s} onDelete={() => onDelete(s.id)} />
+            <IntervalRow key={s.id} session={s} onDelete={() => onDelete(s.id, date)} />
           ))}
         </View>
       )}
@@ -217,12 +217,24 @@ export default function CorridasScreen() {
 
   const { mutateAsync: save, isPending: saving } = useMutation({
     mutationFn: upsertRunSession,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["run_sessions"] }),
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ["run_sessions"] });
+      qc.invalidateQueries({ queryKey: ["daily_log"] });
+      syncRunSessionsToDaily(vars.date).catch(() => {});
+    },
   });
   const { mutateAsync: remove } = useMutation({
     mutationFn: deleteRunSession,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["run_sessions"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["run_sessions"] });
+      qc.invalidateQueries({ queryKey: ["daily_log"] });
+    },
   });
+
+  async function handleDelete(id: string, date: string) {
+    await remove(id);
+    syncRunSessionsToDaily(date).catch(() => {});
+  }
 
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({
@@ -258,7 +270,7 @@ export default function CorridasScreen() {
     try {
       await save({
         date: form.date,
-        interval_type: form.interval_type,
+        interval_type: (form.interval_type || "Easy") as IntervalType,
         distance_km: form.distance ? parseFloat(form.distance) : undefined,
         duration_min: form.duration ? parseFloat(form.duration) : undefined,
         pace_min_km: form.pace ? parseFloat(form.pace) : undefined,
@@ -266,7 +278,7 @@ export default function CorridasScreen() {
         max_hr: form.max_hr ? parseInt(form.max_hr) : undefined,
         thermal_sensation_c: form.temp ? parseFloat(form.temp) : undefined,
         calories_kcal: form.kcal ? parseFloat(form.kcal) : undefined,
-        notes: form.notes || undefined,
+        notes: form.notes || null,
       });
       setShowModal(false);
       setForm({ date: format(new Date(), "yyyy-MM-dd"), interval_type: "Easy" });
@@ -331,7 +343,7 @@ export default function CorridasScreen() {
                 key={date}
                 date={date}
                 sessions={grouped[date]}
-                onDelete={(id) => remove(id)}
+                onDelete={handleDelete}
               />
             ))}
             {sessions.length === 0 && (

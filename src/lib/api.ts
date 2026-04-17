@@ -216,9 +216,39 @@ export async function recalculatePRs(): Promise<void> {
 
   const prIds = Array.from(bestByMovement.values()).map((v) => v.id);
 
-  await supabase.from("pr_attempts").update({ is_pr: false }).neq("id", "00000000-0000-0000-0000-000000000000");
+  const { error: clearErr } = await supabase
+    .from("pr_attempts")
+    .update({ is_pr: false })
+    .neq("id", "00000000-0000-0000-0000-000000000000");
+  if (clearErr) throw clearErr;
 
   if (prIds.length > 0) {
-    await supabase.from("pr_attempts").update({ is_pr: true }).in("id", prIds);
+    const { error: setErr } = await supabase
+      .from("pr_attempts")
+      .update({ is_pr: true })
+      .in("id", prIds);
+    if (setErr) throw setErr;
   }
+}
+
+export async function syncRunSessionsToDaily(date: string): Promise<void> {
+  const userId = await getUserId();
+  const { data: sessions, error } = await supabase
+    .from("run_sessions")
+    .select("duration_min, calories_kcal")
+    .eq("date", date)
+    .eq("user_id", userId);
+  if (error) throw error;
+
+  const min_corrida = sessions && sessions.length > 0
+    ? sessions.reduce((s, r) => s + (r.duration_min ?? 0), 0) || null
+    : null;
+  const kcal_corrida = sessions && sessions.length > 0
+    ? sessions.reduce((s, r) => s + (r.calories_kcal ?? 0), 0) || null
+    : null;
+
+  const { error: upsertErr } = await supabase
+    .from("daily_logs")
+    .upsert({ date, user_id: userId, min_corrida, kcal_corrida }, { onConflict: "user_id,date" });
+  if (upsertErr) throw upsertErr;
 }

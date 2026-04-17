@@ -42,3 +42,6 @@ scripts/node_modules/
 # generated native folders
 /ios
 /android
+
+# Supabase local state
+supabase/.temp/

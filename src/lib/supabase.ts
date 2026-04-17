@@ -15,14 +15,14 @@ const ExpoSecureStoreAdapter = {
       localStorage.setItem(key, value);
       return;
     }
-    SecureStore.setItemAsync(key, value);
+    return SecureStore.setItemAsync(key, value);
   },
   removeItem: (key: string) => {
     if (Platform.OS === "web") {
       localStorage.removeItem(key);
       return;
     }
-    SecureStore.deleteItemAsync(key);
+    return SecureStore.deleteItemAsync(key);
   },
 };
 

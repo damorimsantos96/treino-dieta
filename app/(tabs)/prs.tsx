@@ -174,7 +174,7 @@ export default function PRsScreen() {
         movement_id: selectedMovement.id,
         date: attemptForm.date,
         value: parseFloat(attemptForm.value.replace(",", ".")),
-        notes: attemptForm.notes || undefined,
+        notes: attemptForm.notes || null,
       });
       setSelectedMovement(null);
       setAttemptForm({ date: format(new Date(), "yyyy-MM-dd"), value: "", notes: "" });
