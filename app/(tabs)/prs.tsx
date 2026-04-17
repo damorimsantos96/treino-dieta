@@ -53,6 +53,32 @@ const DEFAULT_MOVEMENTS = [
   { name: "Cindy", unit: "rounds_reps" as PRUnit, category: "CrossFit", lower_is_better: false },
 ];
 
+function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  return !Number.isNaN(parseISO(value).getTime());
+}
+
+function parsePositiveNumber(value: string, errors: string[]): number | null {
+  const raw = value.trim();
+  if (!raw) {
+    errors.push("Valor: informe um número.");
+    return null;
+  }
+
+  const n = Number(raw.replace(",", "."));
+  if (!Number.isFinite(n)) {
+    errors.push("Valor: informe um número válido.");
+    return null;
+  }
+  if (n <= 0) {
+    errors.push("Valor: informe um número maior que zero.");
+  }
+  if (n > 100000) {
+    errors.push("Valor: máximo 100000.");
+  }
+  return n;
+}
+
 function MovementCard({
   movement,
   pr,
@@ -169,11 +195,21 @@ export default function PRsScreen() {
 
   async function handleSaveAttempt() {
     if (!selectedMovement || !attemptForm.value) return;
+    const errors: string[] = [];
+    const date = attemptForm.date.trim();
+    if (!isIsoDate(date)) errors.push("Data: use o formato YYYY-MM-DD.");
+    const value = parsePositiveNumber(attemptForm.value, errors);
+
+    if (errors.length > 0 || value == null) {
+      Alert.alert("Revise os dados", errors.join("\n"));
+      return;
+    }
+
     try {
       await addAttempt({
         movement_id: selectedMovement.id,
-        date: attemptForm.date,
-        value: parseFloat(attemptForm.value.replace(",", ".")),
+        date,
+        value,
         notes: attemptForm.notes || null,
       });
       setSelectedMovement(null);
@@ -184,9 +220,14 @@ export default function PRsScreen() {
   }
 
   async function handleAddMovement() {
-    if (!newMovementForm.name) return;
+    const name = newMovementForm.name.trim();
+    if (!name) return;
     try {
-      await addMovement(newMovementForm);
+      await addMovement({
+        ...newMovementForm,
+        name,
+        category: newMovementForm.category.trim() || null,
+      });
       setShowAddMovement(false);
       setNewMovementForm({ name: "", unit: "time_sec", category: "", lower_is_better: true });
     } catch (err: any) {

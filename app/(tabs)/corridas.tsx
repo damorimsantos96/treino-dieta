@@ -43,6 +43,41 @@ const INTERVAL_TYPES: IntervalType[] = [
   "Easy", "Tempo", "Threshold", "Intervals", "VO2max", "Long Run", "Race", "Outro",
 ];
 
+function isIntervalType(value: string): value is IntervalType {
+  return INTERVAL_TYPES.includes(value as IntervalType);
+}
+
+function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  return !Number.isNaN(parseISO(value).getTime());
+}
+
+function parseOptionalNumber(
+  value: string | undefined,
+  label: string,
+  errors: string[],
+  options: { min?: number; max?: number; integer?: boolean } = {}
+): number | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+
+  const n = Number(raw.replace(",", "."));
+  if (!Number.isFinite(n)) {
+    errors.push(`${label}: informe um número válido.`);
+    return undefined;
+  }
+  if (options.integer && !Number.isInteger(n)) {
+    errors.push(`${label}: informe um número inteiro.`);
+  }
+  if (options.min != null && n < options.min) {
+    errors.push(`${label}: mínimo ${options.min}.`);
+  }
+  if (options.max != null && n > options.max) {
+    errors.push(`${label}: máximo ${options.max}.`);
+  }
+  return n;
+}
+
 const INTERVAL_COLORS: Record<IntervalType, { bg: string; text: string; border: string }> = {
   Easy:       { bg: "rgba(34,197,94,0.12)",   text: "#22c55e", border: "rgba(34,197,94,0.25)"  },
   Tempo:      { bg: "rgba(234,179,8,0.12)",   text: "#eab308", border: "rgba(234,179,8,0.25)"  },
@@ -217,23 +252,23 @@ export default function CorridasScreen() {
 
   const { mutateAsync: save, isPending: saving } = useMutation({
     mutationFn: upsertRunSession,
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ["run_sessions"] });
-      qc.invalidateQueries({ queryKey: ["daily_log"] });
-      syncRunSessionsToDaily(vars.date).catch(() => {});
-    },
   });
   const { mutateAsync: remove } = useMutation({
     mutationFn: deleteRunSession,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["run_sessions"] });
-      qc.invalidateQueries({ queryKey: ["daily_log"] });
-    },
   });
 
   async function handleDelete(id: string, date: string) {
-    await remove(id);
-    syncRunSessionsToDaily(date).catch(() => {});
+    try {
+      await remove(id);
+      await syncRunSessionsToDaily(date);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["run_sessions"] }),
+        qc.invalidateQueries({ queryKey: ["daily_log"] }),
+        qc.invalidateQueries({ queryKey: ["daily_logs"] }),
+      ]);
+    } catch (err: unknown) {
+      Alert.alert("Erro", err instanceof Error ? err.message : "Não foi possível excluir.");
+    }
   }
 
   const [showModal, setShowModal] = useState(false);
@@ -266,20 +301,48 @@ export default function CorridasScreen() {
   );
 
   async function handleSave() {
-    if (!form.interval_type) return;
+    const errors: string[] = [];
+    const date = form.date.trim();
+    if (!isIsoDate(date)) {
+      errors.push("Data: use o formato YYYY-MM-DD.");
+    }
+
+    const intervalType = isIntervalType(form.interval_type)
+      ? form.interval_type
+      : "Easy";
+
+    const distance_km = parseOptionalNumber(form.distance, "Distância", errors, { min: 0, max: 500 });
+    const duration_min = parseOptionalNumber(form.duration, "Duração", errors, { min: 0, max: 1440 });
+    const pace_min_km = parseOptionalNumber(form.pace, "Pace", errors, { min: 1, max: 30 });
+    const avg_hr = parseOptionalNumber(form.avg_hr, "FC média", errors, { min: 30, max: 240, integer: true });
+    const max_hr = parseOptionalNumber(form.max_hr, "FC máx", errors, { min: 30, max: 240, integer: true });
+    const thermal_sensation_c = parseOptionalNumber(form.temp, "Temp", errors, { min: -30, max: 70 });
+    const calories_kcal = parseOptionalNumber(form.kcal, "kcal", errors, { min: 0, max: 10000 });
+
+    if (errors.length > 0) {
+      Alert.alert("Revise os dados", errors.join("\n"));
+      return;
+    }
+
     try {
       await save({
-        date: form.date,
-        interval_type: (form.interval_type || "Easy") as IntervalType,
-        distance_km: form.distance ? parseFloat(form.distance) : undefined,
-        duration_min: form.duration ? parseFloat(form.duration) : undefined,
-        pace_min_km: form.pace ? parseFloat(form.pace) : undefined,
-        avg_hr: form.avg_hr ? parseInt(form.avg_hr) : undefined,
-        max_hr: form.max_hr ? parseInt(form.max_hr) : undefined,
-        thermal_sensation_c: form.temp ? parseFloat(form.temp) : undefined,
-        calories_kcal: form.kcal ? parseFloat(form.kcal) : undefined,
+        date,
+        interval_type: intervalType,
+        distance_km,
+        duration_min,
+        pace_min_km,
+        avg_hr,
+        max_hr,
+        thermal_sensation_c,
+        calories_kcal,
         notes: form.notes || null,
       });
+      await syncRunSessionsToDaily(date);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["run_sessions"] }),
+        qc.invalidateQueries({ queryKey: ["daily_log"] }),
+        qc.invalidateQueries({ queryKey: ["daily_logs"] }),
+      ]);
       setShowModal(false);
       setForm({ date: format(new Date(), "yyyy-MM-dd"), interval_type: "Easy" });
     } catch (err: unknown) {

@@ -7,6 +7,9 @@
  *   1. Copy .env.example to .env and fill in SUPABASE_URL + SUPABASE_SERVICE_KEY
  *   2. node import-excel.mjs
  *
+ * Security note: this script uses xlsx for a one-time local import. Run it only
+ * with trusted spreadsheets that you control.
+ *
  * Requires Node >= 18.
  */
 
@@ -321,6 +324,7 @@ async function importPRSheet(ws, userId) {
 
 async function main() {
   console.log("🚀 Treino & Dieta — Importação histórica\n");
+  console.log("⚠️  Use apenas planilhas locais confiáveis neste importador.\n");
   console.log(`📂 Lendo: ${XLSX_PATH}`);
 
   const wb = XLSX.readFile(XLSX_PATH);

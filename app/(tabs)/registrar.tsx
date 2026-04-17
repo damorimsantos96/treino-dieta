@@ -117,12 +117,39 @@ function TargetRow({ icon, label, value }: { icon: string; label: string; value:
 }
 
 function num(v: string): number | null {
-  const n = parseFloat(v.replace(",", "."));
-  return isNaN(n) ? null : n;
+  const raw = v.trim();
+  if (!raw) return null;
+  const n = Number(raw.replace(",", "."));
+  return Number.isFinite(n) ? n : null;
 }
 
 function str(v: number | null | undefined): string {
   return v != null ? v.toString() : "";
+}
+
+function validateNumber(
+  value: string,
+  label: string,
+  errors: string[],
+  options: { min?: number; max?: number; integer?: boolean } = {}
+) {
+  const raw = value.trim();
+  if (!raw) return;
+
+  const n = num(raw);
+  if (n == null) {
+    errors.push(`${label}: informe um número válido.`);
+    return;
+  }
+  if (options.integer && !Number.isInteger(n)) {
+    errors.push(`${label}: informe um número inteiro.`);
+  }
+  if (options.min != null && n < options.min) {
+    errors.push(`${label}: mínimo ${options.min}.`);
+  }
+  if (options.max != null && n > options.max) {
+    errors.push(`${label}: máximo ${options.max}.`);
+  }
 }
 
 export default function RegistrarScreen() {
@@ -227,6 +254,29 @@ export default function RegistrarScreen() {
   const targets = weightNum ? computeDailyCalculations(previewLog, today, userMetrics) : null;
 
   async function handleSave() {
+    const errors: string[] = [];
+    validateNumber(form.weight, "Peso", errors, { min: 20, max: 300 });
+    validateNumber(form.surplus, "Superávit / Déficit", errors, { min: -10000, max: 10000 });
+    validateNumber(form.min_sauna, "Sauna duração", errors, { min: 0, max: 240 });
+    validateNumber(form.temp_sauna, "Sauna temperatura", errors, { min: 0, max: 130 });
+    validateNumber(form.bpm_sauna, "Sauna FC média", errors, { min: 30, max: 240, integer: true });
+    validateNumber(form.kcal_outros, "Kcal outras atividades", errors, { min: 0, max: 10000 });
+
+    ACTIVITIES.forEach(({ key, label, hasTempBpm }) => {
+      if (!selectedActivities.has(key)) return;
+      validateNumber(form[`kcal_${key}` as keyof FormState], `${label} kcal`, errors, { min: 0, max: 10000 });
+      validateNumber(form[`min_${key}` as keyof FormState], `${label} duração`, errors, { min: 0, max: 1440 });
+      if (hasTempBpm) {
+        validateNumber(form[`temp_${key}` as keyof FormState], `${label} temperatura`, errors, { min: -30, max: 70 });
+        validateNumber(form[`bpm_${key}` as keyof FormState], `${label} FC média`, errors, { min: 30, max: 240, integer: true });
+      }
+    });
+
+    if (errors.length > 0) {
+      Alert.alert("Revise os dados", errors.join("\n"));
+      return;
+    }
+
     const payload: Partial<DailyLog> & { date: string } = {
       date: format(today, "yyyy-MM-dd"),
       weight_kg: num(form.weight),

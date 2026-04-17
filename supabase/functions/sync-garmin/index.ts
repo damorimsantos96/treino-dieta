@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
     if (rows.length > 0) {
       const { error } = await supabaseAdmin
         .from("run_sessions")
-        .upsert(rows, { onConflict: "garmin_activity_id" });
+        .upsert(rows, { onConflict: "user_id,garmin_activity_id" });
       if (error) throw new Error(error.message);
     }
 
