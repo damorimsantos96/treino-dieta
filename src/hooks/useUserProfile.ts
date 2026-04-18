@@ -3,8 +3,8 @@ import { getProfile } from "@/lib/api";
 import { UserMetrics } from "@/utils/calculations";
 
 const FALLBACK: UserMetrics = {
-  heightCm: 170,
-  birthDate: new Date("2000-01-01"),
+  heightCm: 172,
+  birthDate: new Date("1996-07-01"),
 };
 
 export function useUserMetrics(): UserMetrics {
@@ -16,7 +16,7 @@ export function useUserMetrics(): UserMetrics {
   if (!profile) return FALLBACK;
 
   return {
-    heightCm: profile.height_cm ?? 170,
-    birthDate: profile.birth_date ? new Date(profile.birth_date) : new Date("2000-01-01"),
+    heightCm: profile.height_cm ?? FALLBACK.heightCm,
+    birthDate: profile.birth_date ? new Date(profile.birth_date) : FALLBACK.birthDate,
   };
 }

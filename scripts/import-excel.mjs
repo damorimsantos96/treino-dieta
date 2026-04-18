@@ -1,353 +1,441 @@
 /**
- * import-excel.mjs
- * One-time script to import historical data from "Dieta e Treino.xlsx"
- * into Supabase.
+ * One-time historical import from "../Dieta e Treino.xlsx".
  *
- * Usage:
- *   1. Copy .env.example to .env and fill in SUPABASE_URL + SUPABASE_SERVICE_KEY
- *   2. node import-excel.mjs
+ * This parser is intentionally header/worksheet-aware. The original importer
+ * drifted by two columns and read "Musculacao kcal" as body weight.
  *
- * Security note: this script uses xlsx for a one-time local import. Run it only
- * with trusted spreadsheets that you control.
- *
- * Requires Node >= 18.
+ * Required env vars in scripts/.env:
+ *   USER_EMAIL
+ *   SUPABASE_URL
+ *   SUPABASE_SERVICE_KEY (or SUPABASE_SERVICE_ROLE_KEY)
  */
 
 import "dotenv/config";
 import XLSX from "xlsx";
 import { createClient } from "@supabase/supabase-js";
-import { format, parse, isValid } from "date-fns";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const XLSX_PATH = resolve(__dirname, "../../Dieta e Treino.xlsx");
 const USER_EMAIL = process.env.USER_EMAIL;
-if (!USER_EMAIL) throw new Error("Set USER_EMAIL in scripts/.env before running.");
+const USER_ID = process.env.USER_ID;
+const SERVICE_KEY =
+  process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+if (!process.env.SUPABASE_URL) throw new Error("Set SUPABASE_URL in scripts/.env.");
+if (!SERVICE_KEY) throw new Error("Set SUPABASE_SERVICE_KEY in scripts/.env.");
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+const supabase = createClient(process.env.SUPABASE_URL, SERVICE_KEY, {
+  auth: { persistSession: false },
+});
 
-function excelDateToISO(serial) {
-  if (!serial && serial !== 0) return null;
-  if (typeof serial === "string") {
-    // Already a date string like "2022-01-15"
-    const d = new Date(serial);
-    return isValid(d) ? format(d, "yyyy-MM-dd") : null;
+function cell(ws, r, c) {
+  return ws[XLSX.utils.encode_cell({ r, c })];
+}
+
+function excelDateToISO(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") {
+    const d = XLSX.SSF.parse_date_code(value);
+    return d
+      ? `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`
+      : null;
   }
-  // Excel serial number
-  const d = XLSX.SSF.parse_date_code(serial);
-  if (!d) return null;
-  return `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
 }
 
-function toNum(v) {
-  if (v === null || v === undefined || v === "") return null;
-  const n = parseFloat(String(v).replace(",", "."));
-  return isNaN(n) ? null : n;
+function toNum(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(String(value).replace(",", "."));
+  return Number.isFinite(n) ? n : null;
 }
 
-function toInt(v) {
-  const n = toNum(v);
-  return n !== null ? Math.round(n) : null;
+function toInt(value) {
+  const n = toNum(value);
+  return n == null ? null : Math.round(n);
 }
 
-function paceToMinKm(pace) {
-  // pace can be "5:30" string or number in minutes
-  if (!pace) return null;
-  if (typeof pace === "number") return pace;
-  if (typeof pace === "string") {
-    const [m, s] = pace.split(":").map(Number);
-    if (isNaN(m)) return null;
-    return m + (s ?? 0) / 60;
+function sumNums(...values) {
+  let found = false;
+  let sum = 0;
+  for (const value of values) {
+    const n = toNum(value);
+    if (n == null) continue;
+    found = true;
+    sum += n;
   }
+  return found ? sum : null;
+}
+
+function nullIfZero(value) {
+  return value === 0 ? null : value;
+}
+
+function parseClockToMinutes(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw || !raw.includes(":")) return null;
+
+  const parts = raw.split(":").map(Number);
+  if (parts.some((p) => Number.isNaN(p))) return null;
+  if (parts.length === 3) return parts[0] * 60 + parts[1] + parts[2] / 60;
+  if (parts.length === 2) return parts[0] + parts[1] / 60;
   return null;
 }
 
-function timeToSeconds(t) {
-  // HH:MM:SS or fractional day (Excel time serial)
-  if (!t) return null;
-  if (typeof t === "number") {
-    // Excel time serial (fraction of a day)
-    return Math.round(t * 24 * 3600);
-  }
-  if (typeof t === "string") {
-    const parts = t.split(":").map(Number);
-    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-    if (parts.length === 2) return parts[0] * 60 + parts[1];
-  }
-  return null;
+function durationMinutesFromCell(c) {
+  if (!c) return null;
+  const formatted = parseClockToMinutes(c.w);
+  if (formatted != null) return formatted;
+  const n = toNum(c.v);
+  if (n == null) return null;
+  return n < 1 ? n * 1440 : n;
 }
 
-// ── Get user ID ───────────────────────────────────────────────────────────────
+function paceMinutesFromCell(c) {
+  if (!c) return null;
+  const formatted = parseClockToMinutes(c.w);
+  if (formatted != null) return formatted;
+  const n = toNum(c.v);
+  if (n == null) return null;
+  return n < 1 ? n * 24 : n;
+}
+
+function weightedAverage(items, valueKey, weightKey) {
+  let numerator = 0;
+  let denominator = 0;
+  for (const item of items) {
+    const value = item[valueKey];
+    if (value == null) continue;
+    const weight = item[weightKey] ?? 1;
+    numerator += value * weight;
+    denominator += weight;
+  }
+  return denominator > 0 ? numerator / denominator : null;
+}
 
 async function getUserId() {
+  if (USER_ID) {
+    console.log(`User: ${USER_ID}`);
+    return USER_ID;
+  }
+
   const { data, error } = await supabase.auth.admin.listUsers();
   if (error) throw error;
-  const user = data.users.find((u) => u.email === USER_EMAIL);
-  if (!user) throw new Error(`User ${USER_EMAIL} not found. Create the account first.`);
-  console.log(`✓ Found user: ${user.id}`);
+
+  const user = USER_EMAIL
+    ? data.users.find((u) => u.email === USER_EMAIL)
+    : data.users.length === 1
+      ? data.users[0]
+      : null;
+
+  if (!user) {
+    throw new Error(
+      USER_EMAIL
+        ? `User not found: ${USER_EMAIL}`
+        : "Set USER_EMAIL or USER_ID in scripts/.env when the project has multiple users."
+    );
+  }
+
+  console.log(`User: ${user.email ?? USER_EMAIL ?? "single-user"} (${user.id})`);
   return user.id;
 }
 
-// ── Import Diego tab ──────────────────────────────────────────────────────────
+async function upsertBatch(table, rows, options) {
+  const size = 100;
+  let count = 0;
+  for (let i = 0; i < rows.length; i += size) {
+    const batch = rows.slice(i, i + size);
+    const { error } = await supabase.from(table).upsert(batch, options);
+    if (error) throw error;
+    count += batch.length;
+    process.stdout.write(`\r  ${table}: ${count}/${rows.length}`);
+  }
+  process.stdout.write("\n");
+}
 
-async function importDiegoSheet(ws, userId) {
-  console.log("\n📋 Importing daily logs (Diego sheet)...");
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+async function importDailyLogs(ws, userId) {
+  console.log("\nImporting Diego daily logs...");
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  const rows = [];
 
-  const BATCH_SIZE = 100;
-  let imported = 0;
-  let batch = [];
+  for (let r = range.s.r + 1; r <= range.e.r; r++) {
+    const date = excelDateToISO(cell(ws, r, 0)?.v);
+    if (!date) continue;
 
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    const rawDate = row[0]; // Column A: date
-    const dateStr = excelDateToISO(rawDate);
-    if (!dateStr) continue;
+    const weight = toNum(cell(ws, r, 1)?.v);
+    const kcalCrossfit = nullIfZero(sumNums(cell(ws, r, 2)?.v, cell(ws, r, 6)?.v));
+    const kcalMusculacao = nullIfZero(sumNums(cell(ws, r, 3)?.v, cell(ws, r, 8)?.v));
+    const kcalOutros = nullIfZero(sumNums(cell(ws, r, 4)?.v, cell(ws, r, 9)?.v, cell(ws, r, 10)?.v));
+    const kcalCiclismo = nullIfZero(sumNums(cell(ws, r, 5)?.v, cell(ws, r, 12)?.v));
+    const kcalCorrida = nullIfZero(sumNums(cell(ws, r, 11)?.v, cell(ws, r, 16)?.v));
 
-    // Column mapping based on spreadsheet analysis:
-    // A=date, B=weight, C=Diego identifier (skip)
-    // Based on the 43-column structure discovered:
-    // Adjusting indices to match actual columns
     const record = {
       user_id: userId,
-      date: dateStr,
-      weight_kg: toNum(row[3]),          // D: Peso (0-indexed: 3)
-      // Activity calories (columns E-T roughly, indices 4-19)
-      kcal_crossfit: toNum(row[4]),      // E
-      kcal_musculacao: toNum(row[5]),    // F
-      // G=Fortalecimento (map to outros)
-      kcal_outros: toNum(row[6]),        // G: Fortalecimento → outros
-      // H=Bike, skip
-      // I-O: Whoop calories
-      whoop_kcal: toNum(row[8]),         // I: W.Crossfit kcal
-      // P-T: Academia, Boxe, Surf, Corrida, Atividade
-      kcal_academia: toNum(row[15]),     // P
-      kcal_boxe: toNum(row[16]),         // Q
-      kcal_surf: toNum(row[17]),         // R
-      kcal_corrida: toNum(row[18]),      // S
-      // U-AE: durations
-      min_crossfit: toNum(row[20]),      // U
-      min_musculacao: toNum(row[21]),    // V
-      // W=Fortalecimento, X=Along — skip
-      min_academia: toNum(row[26]),      // AA
-      min_boxe: toNum(row[27]),          // AB
-      min_surf: toNum(row[28]),          // AC
-      min_corrida: toNum(row[29]),       // AD
-      min_sauna: toNum(row[30]),         // AE
-      // AF-AJ: temperatures
-      temp_academia: toNum(row[31]),     // AF
-      temp_boxe: toNum(row[32]),         // AG
-      temp_surf: toNum(row[33]),         // AH
-      temp_corrida: toNum(row[34]),      // AI
-      temp_sauna: toNum(row[35]),        // AJ
-      // AK-AO: HR
-      bpm_academia: toInt(row[36]),      // AK
-      bpm_boxe: toInt(row[37]),          // AL
-      bpm_surf: toInt(row[38]),          // AM
-      bpm_corrida: toInt(row[39]),       // AN
-      bpm_sauna: toInt(row[40]),         // AO
-      // AQ: surplus/deficit (index 42)
-      surplus_deficit_kcal: toNum(row[42]),
+      date,
+      weight_kg: weight,
+      kcal_crossfit: kcalCrossfit,
+      kcal_musculacao: kcalMusculacao,
+      kcal_outros: kcalOutros,
+      kcal_ciclismo: kcalCiclismo,
+      kcal_academia: nullIfZero(toNum(cell(ws, r, 13)?.v)),
+      kcal_boxe: nullIfZero(toNum(cell(ws, r, 14)?.v)),
+      kcal_surf: nullIfZero(toNum(cell(ws, r, 15)?.v)),
+      kcal_corrida: kcalCorrida,
+      min_crossfit: nullIfZero(toNum(cell(ws, r, 18)?.v)),
+      min_musculacao: nullIfZero(toNum(cell(ws, r, 19)?.v)),
+      min_ciclismo: nullIfZero(toNum(cell(ws, r, 23)?.v)),
+      min_academia: nullIfZero(toNum(cell(ws, r, 24)?.v)),
+      min_boxe: nullIfZero(toNum(cell(ws, r, 25)?.v)),
+      min_surf: nullIfZero(toNum(cell(ws, r, 26)?.v)),
+      min_corrida: nullIfZero(sumNums(cell(ws, r, 22)?.v, cell(ws, r, 27)?.v)),
+      min_sauna: nullIfZero(toNum(cell(ws, r, 28)?.v)),
+      temp_academia: toNum(cell(ws, r, 30)?.v),
+      temp_boxe: toNum(cell(ws, r, 31)?.v),
+      temp_surf: toNum(cell(ws, r, 32)?.v),
+      temp_corrida: toNum(cell(ws, r, 33)?.v),
+      temp_sauna: toNum(cell(ws, r, 34)?.v),
+      bpm_academia: toInt(cell(ws, r, 35)?.v),
+      bpm_boxe: toInt(cell(ws, r, 36)?.v),
+      bpm_surf: toInt(cell(ws, r, 37)?.v),
+      bpm_corrida: toInt(cell(ws, r, 38)?.v),
+      bpm_sauna: toInt(cell(ws, r, 39)?.v),
+      surplus_deficit_kcal: toNum(cell(ws, r, 40)?.v),
+      protein_g: toNum(cell(ws, r, 43)?.v),
+      carbs_g: toNum(cell(ws, r, 44)?.v),
     };
 
-    // Skip completely empty rows
-    if (!record.weight_kg && !record.kcal_academia && !record.kcal_corrida) continue;
+    rows.push(record);
+  }
 
-    batch.push(record);
+  await upsertBatch("daily_logs", rows, {
+    onConflict: "user_id,date",
+    ignoreDuplicates: false,
+  });
+  console.log(`  Daily logs imported: ${rows.length}`);
+}
 
-    if (batch.length >= BATCH_SIZE) {
-      const { error } = await supabase.from("daily_logs").upsert(batch, {
-        onConflict: "user_id,date",
-        ignoreDuplicates: false,
+async function importRuns(ws, userId) {
+  console.log("\nImporting Corridas as activities + intervals...");
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  const groups = new Map();
+
+  for (let r = range.s.r + 1; r <= range.e.r; r++) {
+    const date = excelDateToISO(cell(ws, r, 0)?.v);
+    if (!date) continue;
+
+    const distance = toNum(cell(ws, r, 3)?.v);
+    const duration = durationMinutesFromCell(cell(ws, r, 2)) ?? paceMinutesFromCell(cell(ws, r, 9));
+    if (!distance && !duration) continue;
+
+    const externalId = `excel:${date}`;
+    if (!groups.has(externalId)) {
+      groups.set(externalId, {
+        date,
+        source: "excel",
+        external_id: externalId,
+        name: "Planilha",
+        intervals: [],
       });
-      if (error) {
-        console.error(`  ✗ Batch error at row ${r}:`, error.message);
-      } else {
-        imported += batch.length;
-        process.stdout.write(`\r  → ${imported} registros importados...`);
-      }
-      batch = [];
     }
-  }
 
-  if (batch.length > 0) {
-    const { error } = await supabase.from("daily_logs").upsert(batch, {
-      onConflict: "user_id,date",
-    });
-    if (!error) imported += batch.length;
-  }
-
-  console.log(`\n  ✓ ${imported} daily logs importados.`);
-}
-
-// ── Import Corridas tab ───────────────────────────────────────────────────────
-
-async function importCorridasSheet(ws, userId) {
-  console.log("\n🏃 Importing run sessions (Corridas sheet)...");
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-
-  const BATCH_SIZE = 200;
-  let imported = 0;
-  let batch = [];
-  let skipped = 0;
-
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    const rawDate = row[0];
-    const dateStr = excelDateToISO(rawDate);
-    if (!dateStr || !row[1]) { skipped++; continue; }
-
-    const durationMin = toNum(row[9]);   // Column J: Tempo (min) — numeric
-    const paceMin = toNum(row[10]);      // Column K: Ritmo (min) — numeric
-
-    const record = {
+    groups.get(externalId).intervals.push({
       user_id: userId,
-      date: dateStr,
-      interval_type: String(row[1] ?? "Easy"),   // B: Intervalo
-      // C: Tempo (HH:MM:SS) — skip, use numeric version
-      distance_km: toNum(row[3]),                // D: Distância
-      pace_min_km: paceMin ?? paceToMinKm(row[4]), // K or E: Ritmo
-      avg_hr: toInt(row[5]),                     // F: FC Média
-      max_hr: toInt(row[6]),                     // G: FC Máx
-      thermal_sensation_c: toNum(row[7]),        // H: Sensação Térmica
-      calories_kcal: toNum(row[8]),              // I: Calorias
-      duration_min: durationMin,                 // J: Tempo (min)
-    };
+      date,
+      interval_type: "Outro",
+      interval_index: toInt(cell(ws, r, 1)?.v) ?? groups.get(externalId).intervals.length + 1,
+      distance_km: distance,
+      duration_min: duration,
+      pace_min_km: paceMinutesFromCell(cell(ws, r, 4)) ?? paceMinutesFromCell(cell(ws, r, 10)),
+      avg_hr: toInt(cell(ws, r, 5)?.v),
+      max_hr: toInt(cell(ws, r, 6)?.v),
+      thermal_sensation_c: toNum(cell(ws, r, 7)?.v),
+      calories_kcal: null,
+      source: "excel",
+      external_id: `excel:${date}:row:${r + 1}`,
+      notes: null,
+    });
 
-    if (!record.distance_km && !record.duration_min) { skipped++; continue; }
-
-    batch.push(record);
-
-    if (batch.length >= BATCH_SIZE) {
-      const { error } = await supabase.from("run_sessions").upsert(batch);
-      if (error) {
-        console.error(`  ✗ Batch error at row ${r}:`, error.message);
-      } else {
-        imported += batch.length;
-        process.stdout.write(`\r  → ${imported} sessões importadas...`);
-      }
-      batch = [];
-    }
+    const group = groups.get(externalId);
+    group.thermal_sensation_c = group.thermal_sensation_c ?? toNum(cell(ws, r, 7)?.v);
+    group.calories_kcal = Math.max(group.calories_kcal ?? 0, toNum(cell(ws, r, 8)?.v) ?? 0) || null;
   }
 
-  if (batch.length > 0) {
-    const { error } = await supabase.from("run_sessions").upsert(batch);
-    if (!error) imported += batch.length;
+  let activityCount = 0;
+  let intervalCount = 0;
+
+  for (const group of groups.values()) {
+    const totalKm = group.intervals.reduce((s, i) => s + (i.distance_km ?? 0), 0);
+    const totalMin = group.intervals.reduce((s, i) => s + (i.duration_min ?? 0), 0);
+    const avgHr = weightedAverage(group.intervals, "avg_hr", "duration_min");
+    const maxHr = Math.max(...group.intervals.map((i) => i.max_hr ?? 0), 0) || null;
+
+    const { data: activity, error: activityError } = await supabase
+      .from("run_activities")
+      .upsert(
+        {
+          user_id: userId,
+          date: group.date,
+          source: group.source,
+          external_id: group.external_id,
+          name: group.name,
+          distance_km: totalKm || null,
+          duration_min: totalMin || null,
+          avg_pace_min_km: totalKm > 0 && totalMin > 0 ? totalMin / totalKm : null,
+          avg_hr: avgHr == null ? null : Math.round(avgHr),
+          max_hr: maxHr,
+          thermal_sensation_c: group.thermal_sensation_c ?? null,
+          calories_kcal: group.calories_kcal ?? null,
+        },
+        { onConflict: "user_id,source,external_id" }
+      )
+      .select("id")
+      .single();
+    if (activityError) throw activityError;
+
+    const { error: deleteError } = await supabase
+      .from("run_sessions")
+      .delete()
+      .eq("run_activity_id", activity.id)
+      .eq("source", "excel");
+    if (deleteError) throw deleteError;
+
+    const rows = group.intervals.map((interval) => ({
+      ...interval,
+      run_activity_id: activity.id,
+    }));
+    const { error: insertError } = await supabase.from("run_sessions").insert(rows);
+    if (insertError) throw insertError;
+
+    activityCount++;
+    intervalCount += rows.length;
+    process.stdout.write(`\r  runs: ${activityCount}/${groups.size}`);
   }
 
-  console.log(`\n  ✓ ${imported} sessões de corrida importadas. (${skipped} linhas puladas)`);
+  process.stdout.write("\n");
+  console.log(`  Run activities imported: ${activityCount}`);
+  console.log(`  Run intervals imported: ${intervalCount}`);
 }
 
-// ── Import Tentativas PR tab ──────────────────────────────────────────────────
+function prValueFromCell(scoreCell, tipo) {
+  const isTime = String(tipo ?? "").toLowerCase().includes("tempo");
+  if (!isTime) return toNum(scoreCell?.v);
 
-async function importPRSheet(ws, userId) {
-  console.log("\n🏆 Importing PR attempts (Tentativas PR sheet)...");
-  // Actual columns: A=Data, B=Movimento, C=Score, D=Tipo
-  // Use header:1 with raw values, but access formatted strings (w) via cell refs
+  const formatted = parseClockToMinutes(scoreCell?.w);
+  if (formatted != null) return Math.round(formatted * 60);
 
+  const n = toNum(scoreCell?.v);
+  if (n == null) return null;
+  return n < 1 ? Math.round(n * 24 * 3600) : n;
+}
+
+async function importPRs(ws, userId) {
+  console.log("\nImporting Tentativas PR...");
   const range = XLSX.utils.decode_range(ws["!ref"]);
   let imported = 0;
 
   for (let r = range.s.r + 1; r <= range.e.r; r++) {
-    const dateCell   = ws[XLSX.utils.encode_cell({ r, c: 0 })];
-    const nameCell   = ws[XLSX.utils.encode_cell({ r, c: 1 })];
-    const scoreCell  = ws[XLSX.utils.encode_cell({ r, c: 2 })];
-    const tipoCell   = ws[XLSX.utils.encode_cell({ r, c: 3 })];
+    const date = excelDateToISO(cell(ws, r, 0)?.v);
+    const name = String(cell(ws, r, 1)?.v ?? "").trim();
+    const tipo = String(cell(ws, r, 3)?.v ?? "Tempo").trim();
+    const value = prValueFromCell(cell(ws, r, 2), tipo);
+    if (!date || !name || value == null || value <= 0) continue;
 
-    if (!dateCell || !nameCell || !scoreCell) continue;
-
-    const dateStr = excelDateToISO(dateCell.v);
-    if (!dateStr) continue;
-
-    const movementName = String(nameCell.v).trim();
-    if (!movementName) continue;
-
-    const tipo = tipoCell?.v ? String(tipoCell.v).trim() : "Tempo";
-    const isTempo = tipo.toLowerCase().includes("tempo");
-
-    // For time cells, Excel stores as fraction of day but formats as mm:ss
-    // Use the formatted string (w) to get the display value like "6:09"
-    let value;
-    if (isTempo && scoreCell.w) {
-      // Parse formatted string "6:09" or "12:34" → seconds
-      const parts = String(scoreCell.w).split(":").map(Number);
-      if (parts.length === 2) value = parts[0] * 60 + parts[1];
-      else if (parts.length === 3) value = parts[0] * 3600 + parts[1] * 60 + parts[2];
-    } else {
-      value = toNum(scoreCell.v);
-    }
-    if (!value) continue;
-
-    const unit = isTempo ? "time_sec" : "reps";
-    const lowerIsBetter = isTempo;
-
-    // Find or create movement
-    let { data: movement } = await supabase
-      .from("pr_movements")
-      .select("id, unit, lower_is_better")
-      .eq("user_id", userId)
-      .eq("name", movementName)
-      .maybeSingle();
-
-    if (!movement) {
-      const { data: newMov, error } = await supabase
-        .from("pr_movements")
-        .insert({ user_id: userId, name: movementName, unit, category: "CrossFit", lower_is_better: lowerIsBetter })
-        .select()
-        .single();
-      if (error) { console.error("  ✗ create movement:", error.message); continue; }
-      movement = newMov;
-    }
-
-    const { error } = await supabase.from("pr_attempts").insert({
+    const isTime = tipo.toLowerCase().includes("tempo");
+    const movementPayload = {
       user_id: userId,
-      movement_id: movement.id,
-      date: dateStr,
-      value,
-      is_pr: false,
-    });
-    if (error) { console.error("  ✗ insert attempt:", error.message); continue; }
+      name,
+      unit: isTime ? "time_sec" : "reps",
+      category: "CrossFit",
+      lower_is_better: isTime,
+    };
+
+    const { data: movement, error: movementError } = await supabase
+      .from("pr_movements")
+      .upsert(movementPayload, { onConflict: "user_id,name" })
+      .select("id")
+      .single();
+    if (movementError) throw movementError;
+
+    const { error: attemptError } = await supabase
+      .from("pr_attempts")
+      .upsert(
+        {
+          user_id: userId,
+          movement_id: movement.id,
+          date,
+          value,
+          notes: null,
+          is_pr: false,
+        },
+        { onConflict: "user_id,movement_id,date,value" }
+      );
+    if (attemptError) throw attemptError;
 
     imported++;
   }
 
-  console.log(`  ✓ ${imported} PR attempts importados.`);
+  await recalculatePRs(userId);
+  console.log(`  PR attempts imported: ${imported}`);
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+async function recalculatePRs(userId) {
+  const { data: attempts, error } = await supabase
+    .from("pr_attempts")
+    .select("id, movement_id, value, movement:pr_movements(lower_is_better)")
+    .eq("user_id", userId)
+    .order("date", { ascending: true });
+  if (error) throw error;
+  if (!attempts?.length) return;
+
+  const bestByMovement = new Map();
+  for (const attempt of attempts) {
+    const lowerIsBetter = attempt.movement?.lower_is_better ?? false;
+    const current = bestByMovement.get(attempt.movement_id);
+    if (
+      !current ||
+      (lowerIsBetter ? attempt.value < current.value : attempt.value > current.value)
+    ) {
+      bestByMovement.set(attempt.movement_id, {
+        id: attempt.id,
+        value: attempt.value,
+      });
+    }
+  }
+
+  const prIds = Array.from(bestByMovement.values()).map((item) => item.id);
+
+  const { error: clearError } = await supabase
+    .from("pr_attempts")
+    .update({ is_pr: false })
+    .eq("user_id", userId);
+  if (clearError) throw clearError;
+
+  const { error: setError } = await supabase
+    .from("pr_attempts")
+    .update({ is_pr: true })
+    .in("id", prIds);
+  if (setError) throw setError;
+}
 
 async function main() {
-  console.log("🚀 Treino & Dieta — Importação histórica\n");
-  console.log("⚠️  Use apenas planilhas locais confiáveis neste importador.\n");
-  console.log(`📂 Lendo: ${XLSX_PATH}`);
+  console.log("Treino & Dieta historical import");
+  console.log(`Reading: ${XLSX_PATH}`);
 
   const wb = XLSX.readFile(XLSX_PATH);
-  console.log(`   Abas encontradas: ${wb.SheetNames.join(", ")}`);
+  console.log(`Sheets: ${wb.SheetNames.join(", ")}`);
 
   const userId = await getUserId();
-
-  // Diego sheet (first visible tab with daily data)
-  const diegoSheet = wb.Sheets["Diego"] ?? wb.Sheets[wb.SheetNames[0]];
-  if (diegoSheet) await importDiegoSheet(diegoSheet, userId);
-
-  // Corridas sheet
-  const corridasSheet = wb.Sheets["Corridas"];
-  if (corridasSheet) await importCorridasSheet(corridasSheet, userId);
-
-  // Tentativas PR sheet
-  const prSheet = wb.Sheets["Tentativas PR"];
-  if (prSheet) await importPRSheet(prSheet, userId);
-
-  console.log("\n✅ Importação concluída!");
+  await importDailyLogs(wb.Sheets.Diego, userId);
+  await importRuns(wb.Sheets.Corridas, userId);
+  await importPRs(wb.Sheets["Tentativas PR"], userId);
+  console.log("\nDone.");
 }
 
-main().catch((err) => {
-  console.error("❌ Erro fatal:", err.message);
+main().catch((error) => {
+  console.error("Import failed:", error);
   process.exit(1);
 });

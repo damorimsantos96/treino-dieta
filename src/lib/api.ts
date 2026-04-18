@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { DailyLog, RunSession, PRMovement, PRAttempt, UserProfile } from "@/types";
+import { DailyLog, RunActivity, RunSession, PRMovement, PRAttempt, UserProfile } from "@/types";
 import { format } from "date-fns";
 
 async function getUserId(): Promise<string> {
@@ -14,17 +14,18 @@ export async function getProfile(): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from("user_profiles")
     .select("*")
-    .single();
-  if (error) return null;
+    .maybeSingle();
+  if (error) throw error;
   return data;
 }
 
 export async function upsertProfile(
   profile: Partial<UserProfile>
 ): Promise<UserProfile> {
+  const userId = await getUserId();
   const { data, error } = await supabase
     .from("user_profiles")
-    .upsert(profile)
+    .upsert({ ...profile, user_id: userId }, { onConflict: "user_id" })
     .select()
     .single();
   if (error) throw error;
@@ -64,11 +65,85 @@ export async function upsertDailyLog(
   const userId = await getUserId();
   const { data, error } = await supabase
     .from("daily_logs")
-    .upsert({ ...log, user_id: userId })
+    .upsert({ ...log, user_id: userId }, { onConflict: "user_id,date" })
     .select()
     .single();
   if (error) throw error;
   return data;
+}
+
+// ─── Running Activities ──────────────────────────────────────────────────────
+
+export async function getRunActivities(
+  from?: Date,
+  to?: Date,
+  limit = 200
+): Promise<RunActivity[]> {
+  let query = supabase
+    .from("run_activities")
+    .select("*, intervals:run_sessions(*)")
+    .order("date", { ascending: false })
+    .limit(limit);
+
+  if (from) query = query.gte("date", format(from, "yyyy-MM-dd"));
+  if (to) query = query.lte("date", format(to, "yyyy-MM-dd"));
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  return ((data ?? []) as RunActivity[]).map((activity) => ({
+    ...activity,
+    intervals: [...(activity.intervals ?? [])].sort(
+      (a, b) => (a.interval_index ?? 0) - (b.interval_index ?? 0)
+    ),
+  }));
+}
+
+export async function createRunActivityWithIntervals(
+  activity: Partial<RunActivity> & { date: string },
+  intervals: Array<Partial<RunSession> & { interval_type: string }>
+): Promise<RunActivity> {
+  const userId = await getUserId();
+  const source = activity.source ?? "manual";
+  const activityPayload = {
+    ...activity,
+    user_id: userId,
+    source,
+  };
+
+  const activityQuery = activity.external_id
+    ? supabase
+        .from("run_activities")
+        .upsert(activityPayload, { onConflict: "user_id,source,external_id" })
+    : supabase.from("run_activities").insert(activityPayload);
+
+  const { data: savedActivity, error: activityError } = await activityQuery
+    .select()
+    .single();
+  if (activityError) throw activityError;
+
+  if (intervals.length > 0) {
+    const rows = intervals.map((interval, index) => ({
+      ...interval,
+      user_id: userId,
+      run_activity_id: savedActivity.id,
+      date: activity.date,
+      source,
+      interval_index: interval.interval_index ?? index + 1,
+    }));
+
+    const { error: intervalError } = await supabase
+      .from("run_sessions")
+      .insert(rows);
+    if (intervalError) throw intervalError;
+  }
+
+  return { ...(savedActivity as RunActivity), intervals: intervals as RunSession[] };
+}
+
+export async function deleteRunActivity(id: string): Promise<void> {
+  const { error } = await supabase.from("run_activities").delete().eq("id", id);
+  if (error) throw error;
 }
 
 // ─── Running Sessions ────────────────────────────────────────────────────────
@@ -233,22 +308,29 @@ export async function recalculatePRs(): Promise<void> {
 
 export async function syncRunSessionsToDaily(date: string): Promise<void> {
   const userId = await getUserId();
-  const { data: sessions, error } = await supabase
-    .from("run_sessions")
+  const { data: activities, error } = await supabase
+    .from("run_activities")
     .select("duration_min, calories_kcal")
     .eq("date", date)
     .eq("user_id", userId);
   if (error) throw error;
 
-  const min_corrida = sessions && sessions.length > 0
-    ? sessions.reduce((s, r) => s + (r.duration_min ?? 0), 0) || null
+  const min_corrida = activities && activities.length > 0
+    ? activities.reduce((s, r) => s + (r.duration_min ?? 0), 0) || null
     : null;
-  const kcal_corrida = sessions && sessions.length > 0
-    ? sessions.reduce((s, r) => s + (r.calories_kcal ?? 0), 0) || null
+  const kcal_corrida = activities && activities.length > 0
+    ? activities.reduce((s, r) => s + (r.calories_kcal ?? 0), 0) || null
     : null;
+
+  const payload: Partial<DailyLog> & { date: string; user_id: string } = {
+    date,
+    user_id: userId,
+    min_corrida,
+  };
+  if (kcal_corrida != null) payload.kcal_corrida = kcal_corrida;
 
   const { error: upsertErr } = await supabase
     .from("daily_logs")
-    .upsert({ date, user_id: userId, min_corrida, kcal_corrida }, { onConflict: "user_id,date" });
+    .upsert(payload, { onConflict: "user_id,date" });
   if (upsertErr) throw upsertErr;
 }

@@ -240,6 +240,8 @@ export default function RegistrarScreen() {
     min_crossfit: selectedActivities.has("crossfit") ? num(form.min_crossfit) : null,
     kcal_musculacao: selectedActivities.has("musculacao") ? num(form.kcal_musculacao) : null,
     min_musculacao: selectedActivities.has("musculacao") ? num(form.min_musculacao) : null,
+    bpm_crossfit: existing?.bpm_crossfit ?? null,
+    bpm_musculacao: existing?.bpm_musculacao ?? null,
     kcal_corrida: null, min_corrida: null, temp_corrida: null, bpm_corrida: null,
     kcal_outros: num(form.kcal_outros),
     min_sauna: num(form.min_sauna), temp_sauna: num(form.temp_sauna), bpm_sauna: num(form.bpm_sauna),

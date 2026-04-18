@@ -9,17 +9,23 @@ import {
 } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import {
-  subDays,
-  subMonths,
+  addDays,
+  addMonths,
+  addWeeks,
+  endOfMonth,
+  endOfWeek,
   format,
   parseISO,
-  eachWeekOfInterval,
-  endOfWeek,
+  startOfMonth,
+  startOfWeek,
+  subDays,
+  subMonths,
 } from "date-fns";
-import { getDailyLogs, getRunSessions } from "@/lib/api";
-import { computeDailyCalculations } from "@/utils/calculations";
+import { getDailyLogs, getRunActivities } from "@/lib/api";
+import { computeDailyCalculations, formatDuration, formatPace } from "@/utils/calculations";
 import { useUserMetrics } from "@/hooks/useUserProfile";
 import { Card, SectionLabel } from "@/components/ui/Card";
+import { RunActivity } from "@/types";
 
 const { width } = Dimensions.get("window");
 const CHART_WIDTH = width - 64;
@@ -33,12 +39,31 @@ const PERIODS: { key: Period; label: string }[] = [
   { key: "1y", label: "1a" },
 ];
 
-function periodToDate(p: Period): Date {
+function periodToDate(period: Period): Date {
   const now = new Date();
-  if (p === "30d") return subDays(now, 30);
-  if (p === "90d") return subDays(now, 90);
-  if (p === "6m") return subMonths(now, 6);
+  if (period === "30d") return subDays(now, 30);
+  if (period === "90d") return subDays(now, 90);
+  if (period === "6m") return subMonths(now, 6);
   return subMonths(now, 12);
+}
+
+function activityDistance(activity: RunActivity): number {
+  return activity.distance_km ??
+    activity.intervals?.reduce((sum, item) => sum + (item.distance_km ?? 0), 0) ??
+    0;
+}
+
+function activityDuration(activity: RunActivity): number {
+  return activity.duration_min ??
+    activity.intervals?.reduce((sum, item) => sum + (item.duration_min ?? 0), 0) ??
+    0;
+}
+
+function movingAverage(values: number[], windowSize: number): number[] {
+  return values.map((_, index) => {
+    const slice = values.slice(Math.max(0, index - windowSize + 1), index + 1);
+    return slice.reduce((sum, value) => sum + value, 0) / slice.length;
+  });
 }
 
 function SimpleBarChart({
@@ -50,36 +75,129 @@ function SimpleBarChart({
   color?: string;
   height?: number;
 }) {
+  const [selected, setSelected] = useState<number | null>(null);
   if (data.length === 0) return null;
-  const max = Math.max(...data.map((d) => d.value), 1);
-  const barWidth = Math.max(4, (CHART_WIDTH - 32) / data.length - 3);
+
+  const max = Math.max(...data.map((item) => item.value), 1);
+  const barWidth = Math.max(4, Math.min(28, (CHART_WIDTH - 32) / data.length - 3));
+  const selectedItem = selected == null ? null : data[selected];
 
   return (
-    <View style={{ height }}>
-      <View className="flex-row items-end justify-between h-full">
-        {data.map((d, i) => (
-          <View key={i} className="items-center" style={{ width: barWidth }}>
-            <View
-              style={{
-                width: barWidth,
-                height: Math.max(3, (d.value / max) * (height - 20)),
-                backgroundColor: color,
-                borderRadius: 4,
-                opacity: 0.85,
-              }}
+    <View className="gap-2">
+      <View style={{ height: height + 24, width: CHART_WIDTH }}>
+        <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">
+          {Math.round(max).toLocaleString()}
+        </Text>
+        <Text className="absolute left-0 bottom-6 text-surface-600 text-[10px]">0</Text>
+        <View className="absolute left-0 right-0 bottom-6 flex-row items-end justify-between" style={{ height }}>
+          {data.map((item, index) => (
+            <TouchableOpacity
+              key={`${item.label}-${index}`}
+              onPress={() => setSelected(index)}
+              className="items-center justify-end"
+              style={{ width: Math.max(barWidth, 8), height }}
             >
               <View
                 style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  height: "40%",
-                  backgroundColor: "rgba(255,255,255,0.2)",
+                  width: barWidth,
+                  height: Math.max(3, (item.value / max) * (height - 16)),
+                  backgroundColor: color,
                   borderRadius: 4,
+                  opacity: selected === index ? 1 : 0.85,
                 }}
               />
-            </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <View className="absolute left-0 right-0 bottom-0 flex-row justify-between">
+          {data.map((item, index) => {
+            const show = data.length <= 8 || index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 5) === 0;
+            return (
+              <Text key={`${item.label}-axis`} className="text-surface-600 text-[10px]" style={{ width: barWidth + 8 }}>
+                {show ? item.label : ""}
+              </Text>
+            );
+          })}
+        </View>
+      </View>
+      {selectedItem && (
+        <View className="bg-surface-700/50 border border-surface-600/40 rounded-xl px-3 py-2">
+          <Text className="text-white text-xs font-semibold">
+            {selectedItem.label}: {Math.round(selectedItem.value).toLocaleString()}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function MultiSparkLine({
+  labels,
+  series,
+  height = 120,
+}: {
+  labels: string[];
+  series: { label: string; color: string; data: number[] }[];
+  height?: number;
+}) {
+  const allValues = series.flatMap((item) => item.data).filter((value) => Number.isFinite(value));
+  if (allValues.length < 2) return null;
+
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
+  const range = max - min || 1;
+  const maxLength = Math.max(...series.map((item) => item.data.length));
+  const pointW = maxLength > 1 ? CHART_WIDTH / (maxLength - 1) : CHART_WIDTH;
+
+  return (
+    <View className="gap-3">
+      <View style={{ height: height + 24, position: "relative", width: CHART_WIDTH }}>
+        <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">{max.toFixed(1)} kg</Text>
+        <Text className="absolute left-0 bottom-6 text-surface-600 text-[10px]">{min.toFixed(1)} kg</Text>
+        <View className="absolute left-0 right-0 bottom-6" style={{ height }}>
+          {series.map((line) =>
+            line.data.map((value, index) => {
+              if (index === 0) return null;
+              const previous = line.data[index - 1];
+              const x1 = (index - 1) * pointW;
+              const x2 = index * pointW;
+              const y1 = height - ((previous - min) / range) * height;
+              const y2 = height - ((value - min) / range) * height;
+              const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+              const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+              return (
+                <View
+                  key={`${line.label}-${index}`}
+                  style={{
+                    position: "absolute",
+                    left: x1,
+                    top: y1,
+                    width: len,
+                    height: 2,
+                    backgroundColor: line.color,
+                    borderRadius: 2,
+                    transformOrigin: "left center",
+                    transform: [{ rotate: `${angle}deg` }],
+                    opacity: 0.9,
+                  }}
+                />
+              );
+            })
+          )}
+        </View>
+        <View className="absolute left-0 right-0 bottom-0 flex-row justify-between">
+          {[0, Math.floor(labels.length / 2), labels.length - 1].map((index) => (
+            <Text key={`${labels[index]}-${index}`} className="text-surface-600 text-[10px]">
+              {labels[index]}
+            </Text>
+          ))}
+        </View>
+      </View>
+      <View className="flex-row flex-wrap gap-3">
+        {series.map((line) => (
+          <View key={line.label} className="flex-row items-center gap-1.5">
+            <View className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: line.color }} />
+            <Text className="text-surface-500 text-xs font-semibold">{line.label}</Text>
           </View>
         ))}
       </View>
@@ -87,63 +205,176 @@ function SimpleBarChart({
   );
 }
 
-function SparkLine({
-  data,
-  color = "#10b981",
-  height = 80,
+type RunBucketMode = "day" | "week" | "month";
+
+function runBucketMode(period: Period): RunBucketMode {
+  if (period === "30d") return "day";
+  if (period === "1y") return "month";
+  return "week";
+}
+
+function bucketStart(date: Date, mode: RunBucketMode): Date {
+  if (mode === "day") return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  if (mode === "week") return startOfWeek(date, { weekStartsOn: 1 });
+  return startOfMonth(date);
+}
+
+function bucketEnd(date: Date, mode: RunBucketMode): Date {
+  if (mode === "day") return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59);
+  if (mode === "week") return endOfWeek(date, { weekStartsOn: 1 });
+  return endOfMonth(date);
+}
+
+function advanceBucket(date: Date, mode: RunBucketMode): Date {
+  if (mode === "day") return addDays(date, 1);
+  if (mode === "week") return addWeeks(date, 1);
+  return addMonths(date, 1);
+}
+
+function buildRunBuckets(activities: RunActivity[], from: Date, to: Date, mode: RunBucketMode) {
+  const buckets: { label: string; distance: number; pace: number | null }[] = [];
+  let cursor = bucketStart(from, mode);
+
+  while (cursor <= to) {
+    const start = bucketStart(cursor, mode);
+    const end = bucketEnd(cursor, mode);
+    const bucketActivities = activities.filter((activity) => {
+      const date = parseISO(activity.date);
+      return date >= start && date <= end;
+    });
+    const distance = bucketActivities.reduce((sum, activity) => sum + activityDistance(activity), 0);
+    const duration = bucketActivities.reduce((sum, activity) => sum + activityDuration(activity), 0);
+
+    buckets.push({
+      label: mode === "month" ? format(start, "MM/yy") : format(start, "dd/MM"),
+      distance,
+      pace: distance > 0 && duration > 0 ? duration / distance : null,
+    });
+    cursor = advanceBucket(cursor, mode);
+  }
+
+  return buckets;
+}
+
+function RunVolumePaceChart({
+  activities,
+  from,
+  to,
+  period,
 }: {
-  data: number[];
-  color?: string;
-  height?: number;
+  activities: RunActivity[];
+  from: Date;
+  to: Date;
+  period: Period;
 }) {
-  if (data.length < 2) return null;
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const range = max - min || 1;
-  const pointW = CHART_WIDTH / (data.length - 1);
+  const [selected, setSelected] = useState<number | null>(null);
+  const mode = runBucketMode(period);
+  const data = useMemo(() => buildRunBuckets(activities, from, to, mode), [activities, from, to, mode]);
+  if (data.length === 0) return null;
+
+  const height = 130;
+  const maxKm = Math.max(...data.map((item) => item.distance), 1);
+  const paces = data.map((item) => item.pace).filter((pace): pace is number => pace != null);
+  const minPace = paces.length ? Math.min(...paces) : 0;
+  const maxPace = paces.length ? Math.max(...paces) : 1;
+  const paceRange = maxPace - minPace || 1;
+  const pointW = data.length > 1 ? CHART_WIDTH / (data.length - 1) : CHART_WIDTH;
+  const barWidth = Math.max(5, Math.min(28, CHART_WIDTH / data.length - 4));
+  const selectedItem = selected == null ? null : data[selected];
 
   return (
-    <View style={{ height, position: "relative" }}>
-      {data.map((v, i) => {
-        if (i === 0) return null;
-        const prev = data[i - 1];
-        const x1 = (i - 1) * pointW;
-        const x2 = i * pointW;
-        const y1 = height - ((prev - min) / range) * height;
-        const y2 = height - ((v - min) / range) * height;
-        const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
-        const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
-        return (
-          <View
-            key={i}
-            style={{
-              position: "absolute",
-              left: x1,
-              top: Math.min(y1, y2) - 1,
-              width: len,
-              height: 2.5,
-              backgroundColor: color,
-              borderRadius: 2,
-              transformOrigin: "left center",
-              transform: [{ rotate: `${angle}deg` }],
-              opacity: 0.9,
-            }}
-          />
-        );
-      })}
-      <View
-        style={{
-          position: "absolute",
-          left: (data.length - 1) * pointW - 5,
-          top: height - ((data[data.length - 1] - min) / range) * height - 5,
-          width: 10,
-          height: 10,
-          borderRadius: 5,
-          backgroundColor: color,
-          borderWidth: 2,
-          borderColor: "#1c1d23",
-        }}
-      />
+    <View className="gap-3">
+      <View className="flex-row justify-end gap-3">
+        <View className="flex-row items-center gap-1">
+          <View className="w-2.5 h-2.5 rounded-sm bg-sky-500" />
+          <Text className="text-surface-500 text-xs">Distancia</Text>
+        </View>
+        <View className="flex-row items-center gap-1">
+          <View className="w-2.5 h-0.5 bg-red-400" />
+          <Text className="text-surface-500 text-xs">Ritmo</Text>
+        </View>
+      </View>
+
+      <View style={{ height: height + 26, width: CHART_WIDTH }}>
+        <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">{maxKm.toFixed(0)} km</Text>
+        <Text className="absolute left-0 bottom-6 text-surface-600 text-[10px]">0 km</Text>
+        {paces.length > 0 && (
+          <>
+            <Text className="absolute right-0 top-0 text-surface-600 text-[10px]">{formatPace(minPace)}/km</Text>
+            <Text className="absolute right-0 bottom-6 text-surface-600 text-[10px]">{formatPace(maxPace)}/km</Text>
+          </>
+        )}
+
+        <View className="absolute left-0 right-0 bottom-6 flex-row items-end justify-between" style={{ height }}>
+          {data.map((item, index) => (
+            <TouchableOpacity
+              key={`${item.label}-${index}`}
+              onPress={() => setSelected(index)}
+              className="items-center justify-end"
+              style={{ width: Math.max(barWidth, 8), height }}
+            >
+              <View
+                style={{
+                  width: barWidth,
+                  height: Math.max(2, (item.distance / maxKm) * (height - 16)),
+                  backgroundColor: "#3b82f6",
+                  borderRadius: 4,
+                  opacity: selected === index ? 1 : 0.82,
+                }}
+              />
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View pointerEvents="none" className="absolute left-0 right-0 bottom-6" style={{ height }}>
+          {data.map((item, index) => {
+            if (index === 0 || item.pace == null || data[index - 1].pace == null) return null;
+            const previous = data[index - 1].pace!;
+            const x1 = (index - 1) * pointW;
+            const x2 = index * pointW;
+            const y1 = ((previous - minPace) / paceRange) * (height - 16) + 8;
+            const y2 = ((item.pace - minPace) / paceRange) * (height - 16) + 8;
+            const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+            const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+            return (
+              <View
+                key={`pace-${index}`}
+                style={{
+                  position: "absolute",
+                  left: x1,
+                  top: y1,
+                  width: len,
+                  height: 2,
+                  backgroundColor: "#f87171",
+                  borderRadius: 2,
+                  transformOrigin: "left center",
+                  transform: [{ rotate: `${angle}deg` }],
+                }}
+              />
+            );
+          })}
+        </View>
+
+        <View className="absolute left-0 right-0 bottom-0 flex-row justify-between">
+          {data.map((item, index) => {
+            const show = data.length <= 8 || index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 5) === 0;
+            return (
+              <Text key={`${item.label}-axis`} className="text-surface-600 text-[10px]" style={{ width: barWidth + 8 }}>
+                {show ? item.label : ""}
+              </Text>
+            );
+          })}
+        </View>
+      </View>
+
+      {selectedItem && (
+        <View className="bg-surface-700/50 border border-surface-600/40 rounded-xl px-3 py-2">
+          <Text className="text-white text-xs font-semibold">
+            {selectedItem.label}: {selectedItem.distance.toFixed(1)} km
+            {selectedItem.pace ? ` - ${formatPace(selectedItem.pace)}/km` : ""}
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -158,45 +389,46 @@ function StatRow({ label, value, valueColor }: { label: string; value: string; v
 }
 
 export default function AnalisesScreen() {
-  const [period, setPeriod] = useState<Period>("30d");
+  const [period, setPeriod] = useState<Period>("90d");
   const from = periodToDate(period);
   const now = useMemo(() => new Date(), []);
 
-  // Activity/run data uses the selected period
   const { data: logs = [], isLoading: loadingLogs } = useQuery({
     queryKey: ["daily_logs", period],
     queryFn: () => getDailyLogs(from, now),
   });
 
-  // Weight uses a fixed 2-year window — independent of period selector
-  const weightFrom = useMemo(() => subMonths(now, 24), [now]);
+  const weightFrom = useMemo(() => subMonths(now, 60), [now]);
   const { data: weightLogs = [], isLoading: loadingWeight } = useQuery({
-    queryKey: ["daily_logs_weight_2y"],
+    queryKey: ["daily_logs_weight_5y"],
     queryFn: () => getDailyLogs(weightFrom, now),
     staleTime: 5 * 60 * 1000,
   });
 
   const { data: runs = [], isLoading: loadingRuns } = useQuery({
-    queryKey: ["run_sessions", period],
-    queryFn: () => getRunSessions(from, now, 500),
+    queryKey: ["run_activities", period],
+    queryFn: () => getRunActivities(from, now, 2000),
   });
 
   const userMetrics = useUserMetrics();
   const isLoading = loadingLogs || loadingRuns || loadingWeight;
 
-  // Weight data from full 2-year window
-  const weightData = weightLogs
-    .filter((l) => l.weight_kg)
-    .reverse()
-    .map((l) => l.weight_kg!);
+  const weightRows = weightLogs
+    .filter((log) => log.weight_kg)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((log) => ({ date: log.date, weight: log.weight_kg! }));
 
+  const weightData = weightRows.map((row) => row.weight);
+  const weightLabels = weightRows.map((row) => format(parseISO(row.date), "dd/MM/yy"));
   const latestWeight = weightData[weightData.length - 1];
+  const mm7 = movingAverage(weightData, 7);
+  const mm14 = movingAverage(weightData, 14);
+  const mm30 = movingAverage(weightData, 30);
 
-  // Weight stats use the selected period
   const weightInPeriod = logs
-    .filter((l) => l.weight_kg)
-    .reverse()
-    .map((l) => l.weight_kg!);
+    .filter((log) => log.weight_kg)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((log) => log.weight_kg!);
   const firstWeightInPeriod = weightInPeriod[0];
   const lastWeightInPeriod = weightInPeriod[weightInPeriod.length - 1];
   const weightDelta =
@@ -204,48 +436,47 @@ export default function AnalisesScreen() {
       ? lastWeightInPeriod - firstWeightInPeriod
       : 0;
 
-  const weightMa7 = weightData.map((_, i) => {
-    const slice = weightData.slice(Math.max(0, i - 6), i + 1);
-    return slice.reduce((a, b) => a + b, 0) / slice.length;
-  });
-
   const tdeeData = logs
-    .filter((l) => l.weight_kg)
-    .reverse()
-    .map((l) => ({
-      label: l.date,
-      value: computeDailyCalculations(l, parseISO(l.date), userMetrics).tdee_kcal,
+    .filter((log) => log.weight_kg)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((log) => ({
+      label: format(parseISO(log.date), "dd/MM"),
+      value: computeDailyCalculations(log, parseISO(log.date), userMetrics).tdee_kcal,
     }));
 
   const avgTdee = tdeeData.length
-    ? tdeeData.reduce((s, d) => s + d.value, 0) / tdeeData.length
+    ? tdeeData.reduce((sum, item) => sum + item.value, 0) / tdeeData.length
     : 0;
 
-  const totalKm = runs.reduce((s, r) => s + (r.distance_km ?? 0), 0);
-  const validPaces = runs.filter((r) => r.pace_min_km && r.pace_min_km > 1);
-  const avgPace = validPaces.length
-    ? validPaces.reduce((s, r) => s + r.pace_min_km!, 0) / validPaces.length
-    : 0;
+  const totalKm = runs.reduce((sum, activity) => sum + activityDistance(activity), 0);
+  const totalRunDuration = runs.reduce((sum, activity) => sum + activityDuration(activity), 0);
+  const avgPace = totalKm > 0 && totalRunDuration > 0 ? totalRunDuration / totalKm : 0;
+  const runDays = new Set(runs.map((activity) => activity.date)).size;
+  const avgRunHr = (() => {
+    let weighted = 0;
+    let duration = 0;
+    for (const activity of runs) {
+      if (!activity.avg_hr) continue;
+      const minutes = activityDuration(activity) || 1;
+      weighted += activity.avg_hr * minutes;
+      duration += minutes;
+    }
+    return duration > 0 ? Math.round(weighted / duration) : null;
+  })();
 
-  const weeklyKm = eachWeekOfInterval({ start: from, end: now }).map((week) => {
-    const wEnd = endOfWeek(week);
-    const weekRuns = runs.filter((r) => {
-      const d = parseISO(r.date);
-      return d >= week && d <= wEnd;
-    });
-    return {
-      label: format(week, "dd/MM"),
-      value: weekRuns.reduce((s, r) => s + (r.distance_km ?? 0), 0),
-    };
-  });
-
-  const trainingDays = logs.filter((l) => {
-    return (
-      (l.min_academia ?? 0) + (l.min_boxe ?? 0) + (l.min_surf ?? 0) +
-      (l.min_corrida ?? 0) + (l.min_crossfit ?? 0) + (l.min_musculacao ?? 0) +
-      (l.min_ciclismo ?? 0) > 0
-    );
-  }).length;
+  const runDateSet = new Set(runs.map((activity) => activity.date));
+  const trainingDays = new Set(
+    logs
+      .filter((log) => {
+        return (
+          (log.min_academia ?? 0) + (log.min_boxe ?? 0) + (log.min_surf ?? 0) +
+          (log.min_corrida ?? 0) + (log.min_crossfit ?? 0) + (log.min_musculacao ?? 0) +
+          (log.min_ciclismo ?? 0) > 0
+        );
+      })
+      .map((log) => log.date)
+      .concat(Array.from(runDateSet))
+  ).size;
 
   return (
     <ScrollView
@@ -254,26 +485,19 @@ export default function AnalisesScreen() {
     >
       <View>
         <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
-          Tendências
+          Tendencias
         </Text>
-        <Text className="text-white text-3xl font-bold tracking-tight">Análises</Text>
+        <Text className="text-white text-3xl font-bold tracking-tight">Analises</Text>
       </View>
 
-      {/* Period selector */}
       <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1">
         {PERIODS.map(({ key, label }) => (
           <TouchableOpacity
             key={key}
-            className={`flex-1 py-2 rounded-xl items-center ${
-              period === key ? "bg-brand-500" : ""
-            }`}
+            className={`flex-1 py-2 rounded-xl items-center ${period === key ? "bg-brand-500" : ""}`}
             onPress={() => setPeriod(key)}
           >
-            <Text
-              className={`text-sm font-bold ${
-                period === key ? "text-white" : "text-surface-500"
-              }`}
-            >
+            <Text className={`text-sm font-bold ${period === key ? "text-white" : "text-surface-500"}`}>
               {label}
             </Text>
           </TouchableOpacity>
@@ -284,101 +508,77 @@ export default function AnalisesScreen() {
         <ActivityIndicator color="#10b981" size="large" className="mt-12" />
       ) : (
         <>
-          {/* ── Peso ─────────────────────────────────────────── */}
           <Card className="gap-4">
             <SectionLabel label="Peso" />
             {weightData.length > 1 ? (
               <>
-                <SparkLine data={weightMa7} color="#10b981" />
+                <MultiSparkLine
+                  labels={weightLabels}
+                  series={[
+                    { label: "MM7", color: "#10b981", data: mm7 },
+                    { label: "MM14", color: "#38bdf8", data: mm14 },
+                    { label: "MM30", color: "#a78bfa", data: mm30 },
+                  ]}
+                />
                 <StatRow
                   label="Atual"
-                  value={`${latestWeight?.toFixed(1) ?? "—"} kg`}
+                  value={`${latestWeight?.toFixed(1) ?? "-"} kg`}
                   valueColor="text-brand-400"
                 />
                 <StatRow
-                  label={`Variação (${period})`}
+                  label="Medias moveis"
+                  value={`MM7 ${mm7.at(-1)?.toFixed(1)} | MM14 ${mm14.at(-1)?.toFixed(1)} | MM30 ${mm30.at(-1)?.toFixed(1)}`}
+                />
+                <StatRow
+                  label={`Variacao (${period})`}
                   value={
                     weightDelta !== 0
                       ? `${weightDelta >= 0 ? "+" : ""}${weightDelta.toFixed(1)} kg`
-                      : "Sem dados no período"
+                      : "Sem dados no periodo"
                   }
                   valueColor={weightDelta <= 0 ? "text-brand-400" : "text-amber-400"}
                 />
-                <StatRow
-                  label="Menor (2 anos)"
-                  value={`${Math.min(...weightData).toFixed(1)} kg`}
-                />
-                <StatRow
-                  label="Maior (2 anos)"
-                  value={`${Math.max(...weightData).toFixed(1)} kg`}
-                />
+                <StatRow label="Menor (historico)" value={`${Math.min(...weightData).toFixed(1)} kg`} />
+                <StatRow label="Maior (historico)" value={`${Math.max(...weightData).toFixed(1)} kg`} />
               </>
             ) : (
-              <Text className="text-surface-500 text-sm">Nenhum peso registrado nos últimos 2 anos.</Text>
+              <Text className="text-surface-500 text-sm">Nenhum peso registrado no historico.</Text>
             )}
           </Card>
 
-          {/* ── Calorias ─────────────────────────────────── */}
           <Card className="gap-4">
-            <SectionLabel label="Gasto Calórico" />
+            <SectionLabel label="Gasto Calorico" />
             {tdeeData.length > 0 ? (
               <>
                 <SimpleBarChart data={tdeeData} color="#f97316" />
                 <StatRow
-                  label="Média diária"
+                  label="Media diaria"
                   value={`${Math.round(avgTdee).toLocaleString()} kcal`}
                   valueColor="text-orange-400"
                 />
-                <StatRow
-                  label="Dias com atividade"
-                  value={`${trainingDays} / ${logs.length} dias`}
-                />
+                <StatRow label="Dias com atividade" value={`${trainingDays} / ${logs.length} dias`} />
               </>
             ) : (
               <Text className="text-surface-500 text-sm">Sem dados de calorias.</Text>
             )}
           </Card>
 
-          {/* ── Corridas ─────────────────────────────────── */}
           <Card className="gap-4">
             <SectionLabel label="Corridas" />
             {runs.length > 0 ? (
               <>
-                <SimpleBarChart data={weeklyKm} color="#3b82f6" />
-                <StatRow
-                  label="Km total"
-                  value={`${totalKm.toFixed(1)} km`}
-                  valueColor="text-sky-400"
-                />
-                <StatRow label="Intervalos" value={`${runs.length}`} />
-                <StatRow
-                  label="Pace médio"
-                  value={
-                    avgPace
-                      ? `${Math.floor(avgPace)}:${Math.round((avgPace % 1) * 60)
-                          .toString()
-                          .padStart(2, "0")}/km`
-                      : "—"
-                  }
-                />
-                <StatRow
-                  label="FC média"
-                  value={
-                    runs.filter((r) => r.avg_hr).length
-                      ? `${Math.round(
-                          runs.filter((r) => r.avg_hr).reduce((s, r) => s + r.avg_hr!, 0) /
-                            runs.filter((r) => r.avg_hr).length
-                        )} bpm`
-                      : "—"
-                  }
-                />
+                <RunVolumePaceChart activities={runs} from={from} to={now} period={period} />
+                <StatRow label="Km total" value={`${totalKm.toFixed(1)} km`} valueColor="text-sky-400" />
+                <StatRow label="Corridas" value={`${runs.length}`} />
+                <StatRow label="Dias corridos" value={`${runDays}`} />
+                <StatRow label="Pace medio" value={avgPace ? `${formatPace(avgPace)}/km` : "-"} />
+                <StatRow label="FC media" value={avgRunHr ? `${avgRunHr} bpm` : "-"} />
               </>
             ) : (
-              <Text className="text-surface-500 text-sm">Sem corridas neste período.</Text>
+              <Text className="text-surface-500 text-sm">Sem corridas neste periodo.</Text>
             )}
           </Card>
 
-          {/* ── Volume de Treino ──────────────────────────── */}
           <Card className="gap-4">
             <SectionLabel label="Volume de Treino" />
             {(() => {
@@ -388,47 +588,40 @@ export default function AnalisesScreen() {
                 { label: "Surf", key: "min_surf", color: "#06b6d4" },
                 { label: "Ciclismo", key: "min_ciclismo", color: "#10b981" },
                 { label: "CrossFit", key: "min_crossfit", color: "#f59e0b" },
-                { label: "Musculação", key: "min_musculacao", color: "#8b5cf6" },
+                { label: "Musculacao", key: "min_musculacao", color: "#8b5cf6" },
               ]
-                .map((a) => ({
-                  ...a,
-                  total: logs.reduce((s, l) => s + ((l[a.key as keyof typeof l] as number | null) ?? 0), 0),
+                .map((activity) => ({
+                  ...activity,
+                  total: logs.reduce(
+                    (sum, log) => sum + ((log[activity.key as keyof typeof log] as number | null) ?? 0),
+                    0
+                  ),
                 }))
-                .filter((a) => a.total > 0);
+                .concat([{ label: "Corrida", key: "run_activities", color: "#3b82f6", total: totalRunDuration }])
+                .filter((activity) => activity.total > 0);
 
-              if (byActivity.length === 0)
+              if (byActivity.length === 0) {
                 return <Text className="text-surface-500 text-sm">Sem dados de volume.</Text>;
+              }
 
-              const maxMin = Math.max(...byActivity.map((a) => a.total));
-              return byActivity.map((a) => (
-                <View key={a.key} className="gap-2">
+              const maxMin = Math.max(...byActivity.map((activity) => activity.total));
+              return byActivity.map((activity) => (
+                <View key={activity.key} className="gap-2">
                   <View className="flex-row justify-between items-center">
-                    <Text className="text-white text-sm font-semibold">{a.label}</Text>
+                    <Text className="text-white text-sm font-semibold">{activity.label}</Text>
                     <Text className="text-surface-500 text-xs font-medium">
-                      {Math.round(a.total / 60)}h {Math.round(a.total % 60)}m
+                      {formatDuration(activity.total)}
                     </Text>
                   </View>
                   <View className="h-2.5 bg-surface-700 rounded-full overflow-hidden">
                     <View
                       style={{
-                        width: `${(a.total / maxMin) * 100}%`,
-                        backgroundColor: a.color,
+                        width: `${(activity.total / maxMin) * 100}%`,
+                        backgroundColor: activity.color,
                         height: "100%",
                         borderRadius: 4,
                       }}
-                    >
-                      <View
-                        style={{
-                          position: "absolute",
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          height: "50%",
-                          backgroundColor: "rgba(255,255,255,0.18)",
-                          borderRadius: 4,
-                        }}
-                      />
-                    </View>
+                    />
                   </View>
                 </View>
               ));

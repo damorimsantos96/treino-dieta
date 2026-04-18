@@ -1,9 +1,10 @@
 export interface UserProfile {
   id: string;
-  email: string;
+  user_id: string;
+  email?: string;
   name: string;
-  birth_date: string; // ISO date
-  height_cm: number;
+  birth_date: string | null; // ISO date
+  height_cm: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +49,8 @@ export interface DailyLog {
   bpm_surf: number | null;
   bpm_corrida: number | null;
   bpm_ciclismo: number | null;
+  bpm_crossfit: number | null;
+  bpm_musculacao: number | null;
   bpm_sauna: number | null;
 
   // Manual input
@@ -89,8 +92,10 @@ export type IntervalType =
 export interface RunSession {
   id: string;
   user_id: string;
+  run_activity_id: string | null;
   date: string; // YYYY-MM-DD
   interval_type: IntervalType;
+  interval_index: number | null;
   distance_km: number | null;
   duration_min: number | null;
   pace_min_km: number | null;
@@ -99,8 +104,30 @@ export interface RunSession {
   thermal_sensation_c: number | null;
   calories_kcal: number | null;
   garmin_activity_id: string | null;
+  source: string | null;
+  external_id: string | null;
   notes: string | null;
   created_at: string;
+}
+
+export interface RunActivity {
+  id: string;
+  user_id: string;
+  date: string; // YYYY-MM-DD
+  source: string;
+  external_id: string | null;
+  name: string | null;
+  distance_km: number | null;
+  duration_min: number | null;
+  avg_pace_min_km: number | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+  thermal_sensation_c: number | null;
+  calories_kcal: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  intervals?: RunSession[];
 }
 
 export type PRUnit = "time_sec" | "reps" | "weight_kg" | "rounds_reps" | "meters";
@@ -133,4 +160,17 @@ export interface RunSummary {
   avg_pace_min_km: number;
   avg_hr: number;
   sessions_count: number;
+}
+
+export interface SyncCandidate {
+  id: string;
+  date: string;
+  name: string;
+  provider: "whoop" | "garmin";
+  duration_min: number | null;
+  distance_km?: number | null;
+  kcal?: number | null;
+  avg_hr?: number | null;
+  already_imported: boolean;
+  raw?: unknown;
 }

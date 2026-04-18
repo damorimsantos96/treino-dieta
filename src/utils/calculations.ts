@@ -50,7 +50,7 @@ export function calculateTDEE(
     (log.min_musculacao ?? 0) +
     (log.min_ciclismo ?? 0);
 
-  const awakeNonActiveMin = 24 * 60 - sleepMin - totalActivityMin;
+  const nonActiveMin = 24 * 60 - totalActivityMin;
 
   const totalActivityKcal =
     (log.kcal_academia ?? 0) +
@@ -63,7 +63,7 @@ export function calculateTDEE(
     (log.kcal_outros ?? 0) +
     (log.whoop_kcal ?? 0);
 
-  return caloSleep + dailyActive * awakeNonActiveMin + totalActivityKcal;
+  return caloSleep + dailyActive * nonActiveMin + totalActivityKcal;
 }
 
 export function calculateWaterMl(log: DailyLog): number {
@@ -110,7 +110,7 @@ export function calculateMinCarbs(weight: number | null, date: Date): number {
   if (!weight) return 0;
   const dow = date.getDay();
   let gPerKg: number;
-  if (dow === 1 || dow === 2 || dow === 0) gPerKg = 5.5;
+  if (dow === 1 || dow === 2 || dow === 6) gPerKg = 5.5;
   else if (dow === 3 || dow === 5) gPerKg = 7;
   else if (dow === 4) gPerKg = 6;
   else gPerKg = 6.5;

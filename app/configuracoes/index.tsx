@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -6,11 +6,16 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Modal,
+  TextInput,
 } from "react-native";
 import { router } from "expo-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/stores/auth";
 import { useBiometrics } from "@/hooks/useBiometrics";
 import { supabase, supabaseUrl } from "@/lib/supabase";
+import { getProfile, upsertProfile } from "@/lib/api";
+import { SyncCandidate } from "@/types";
 
 type SyncState = "idle" | "loading" | "success" | "error";
 
@@ -61,68 +66,143 @@ function SettingsRow({
   );
 }
 
+function formatCandidateMeta(candidate: SyncCandidate): string {
+  const parts = [
+    candidate.date,
+    candidate.distance_km ? `${candidate.distance_km.toFixed(2)} km` : null,
+    candidate.duration_min ? `${Math.round(candidate.duration_min)} min` : null,
+    candidate.kcal ? `${Math.round(candidate.kcal)} kcal` : null,
+    candidate.avg_hr ? `${candidate.avg_hr} bpm` : null,
+  ].filter(Boolean);
+  return parts.join(" | ");
+}
+
 export default function ConfiguracoesScreen() {
   const { signOut, user } = useAuthStore();
   const { isAvailable, isEnabled, enableBiometrics, disableBiometrics } = useBiometrics();
+  const qc = useQueryClient();
   const [whoopSync, setWhoopSync] = useState<SyncState>("idle");
   const [garminSync, setGarminSync] = useState<SyncState>("idle");
+  const [syncProvider, setSyncProvider] = useState<"whoop" | "garmin" | null>(null);
+  const [candidates, setCandidates] = useState<SyncCandidate[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [profileForm, setProfileForm] = useState({
+    name: "",
+    birth_date: "1996-07-01",
+    height_cm: "172",
+  });
 
-  async function syncWhoop() {
-    setWhoopSync("loading");
+  const { data: profile } = useQuery({
+    queryKey: ["user_profile"],
+    queryFn: getProfile,
+  });
+
+  const { mutateAsync: saveProfile, isPending: savingProfile } = useMutation({
+    mutationFn: upsertProfile,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["user_profile"] }),
+  });
+
+  useEffect(() => {
+    if (!profile) return;
+    setProfileForm({
+      name: profile.name ?? "",
+      birth_date: profile.birth_date ?? "1996-07-01",
+      height_cm: String(profile.height_cm ?? 172),
+    });
+  }, [profile]);
+
+  async function callSyncFunction(
+    provider: "whoop" | "garmin",
+    mode: "list" | "import",
+    ids: string[] = []
+  ) {
+    const session = await supabase.auth.getSession();
+    const token = session.data.session?.access_token;
+    const res = await fetch(`${supabaseUrl}/functions/v1/sync-${provider}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mode, ids }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.fallback) {
+      throw new Error(data.error ?? "Sincronizacao falhou.");
+    }
+    return data;
+  }
+
+  async function previewSync(provider: "whoop" | "garmin") {
+    const setState = provider === "whoop" ? setWhoopSync : setGarminSync;
+    setState("loading");
     try {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
-      const res = await fetch(
-        `${supabaseUrl}/functions/v1/sync-whoop`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Erro desconhecido");
-      setWhoopSync("success");
-      Alert.alert("✅ Whoop", data.message);
+      const data = await callSyncFunction(provider, "list");
+      const list = (data.candidates ?? []) as SyncCandidate[];
+      setCandidates(list);
+      setSelectedIds(new Set(list.filter((item) => !item.already_imported).map((item) => item.id)));
+      setSyncProvider(provider);
+      setState("success");
     } catch (err: any) {
-      setWhoopSync("error");
-      Alert.alert("Erro Whoop", err.message);
+      setState("error");
+      Alert.alert(`Erro ${provider === "whoop" ? "Whoop" : "Garmin"}`, err.message);
     } finally {
-      setTimeout(() => setWhoopSync("idle"), 3000);
+      setTimeout(() => setState("idle"), 3000);
     }
   }
 
-  async function syncGarmin() {
-    setGarminSync("loading");
+  async function importSelected() {
+    if (!syncProvider) return;
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) {
+      Alert.alert("Nada selecionado", "Escolha pelo menos um item novo para importar.");
+      return;
+    }
+
+    const provider = syncProvider;
+    const setState = provider === "whoop" ? setWhoopSync : setGarminSync;
+    setState("loading");
     try {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
-      const res = await fetch(
-        `${supabaseUrl}/functions/v1/sync-garmin`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      const data = await res.json();
-      if (!res.ok || data.fallback) {
-        throw new Error(data.error ?? "API Garmin falhou. Tente novamente.");
-      }
-      setGarminSync("success");
-      Alert.alert("✅ Garmin", data.message);
+      const data = await callSyncFunction(provider, "import", ids);
+      setState("success");
+      setSyncProvider(null);
+      setCandidates([]);
+      setSelectedIds(new Set());
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["daily_log"] }),
+        qc.invalidateQueries({ queryKey: ["daily_logs"] }),
+        qc.invalidateQueries({ queryKey: ["run_activities"] }),
+        qc.invalidateQueries({ queryKey: ["run_sessions"] }),
+      ]);
+      Alert.alert(provider === "whoop" ? "Whoop" : "Garmin", data.message);
     } catch (err: any) {
-      setGarminSync("error");
-      Alert.alert(
-        "Erro Garmin",
-        `${err.message}\n\nDica: Use o input manual na aba Corridas como fallback.`
-      );
+      setState("error");
+      Alert.alert("Erro", err.message);
     } finally {
-      setTimeout(() => setGarminSync("idle"), 3000);
+      setTimeout(() => setState("idle"), 3000);
+    }
+  }
+
+  async function handleSaveProfile() {
+    const height = Number(profileForm.height_cm.replace(",", "."));
+    if (!Number.isFinite(height) || height < 120 || height > 230) {
+      Alert.alert("Revise o perfil", "Altura deve ficar entre 120 e 230 cm.");
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(profileForm.birth_date)) {
+      Alert.alert("Revise o perfil", "Data de nascimento deve usar YYYY-MM-DD.");
+      return;
+    }
+
+    try {
+      await saveProfile({
+        name: profileForm.name.trim(),
+        birth_date: profileForm.birth_date,
+        height_cm: Math.round(height),
+      });
+      Alert.alert("Perfil", "Perfil salvo.");
+    } catch (err: any) {
+      Alert.alert("Erro", err.message);
     }
   }
 
@@ -141,6 +221,7 @@ export default function ConfiguracoesScreen() {
   }
 
   return (
+    <>
     <ScrollView
       className="flex-1 bg-surface-900"
       contentContainerClassName="px-4 pt-14 pb-10"
@@ -166,16 +247,67 @@ export default function ConfiguracoesScreen() {
       )}
 
       {/* ── Integrações ─── */}
+      <SectionTitle title="Perfil" />
+      <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2 gap-3">
+        <Text className="text-surface-600 text-xs leading-5">
+          Altura e nascimento entram no calculo do gasto diario.
+        </Text>
+        <View className="gap-1.5">
+          <Text className="text-surface-500 text-xs font-semibold">Nome</Text>
+          <TextInput
+            className="bg-surface-700 border border-surface-600/40 text-white rounded-xl px-4 py-3"
+            value={profileForm.name}
+            onChangeText={(value) => setProfileForm((current) => ({ ...current, name: value }))}
+            placeholder="Diego"
+            placeholderTextColor="#4a4b58"
+          />
+        </View>
+        <View className="flex-row gap-3">
+          <View className="flex-1 gap-1.5">
+            <Text className="text-surface-500 text-xs font-semibold">Nascimento</Text>
+            <TextInput
+              className="bg-surface-700 border border-surface-600/40 text-white rounded-xl px-4 py-3"
+              value={profileForm.birth_date}
+              onChangeText={(value) => setProfileForm((current) => ({ ...current, birth_date: value }))}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor="#4a4b58"
+            />
+          </View>
+          <View className="flex-1 gap-1.5">
+            <Text className="text-surface-500 text-xs font-semibold">Altura</Text>
+            <TextInput
+              className="bg-surface-700 border border-surface-600/40 text-white rounded-xl px-4 py-3"
+              value={profileForm.height_cm}
+              onChangeText={(value) => setProfileForm((current) => ({ ...current, height_cm: value }))}
+              keyboardType="number-pad"
+              placeholder="172"
+              placeholderTextColor="#4a4b58"
+            />
+          </View>
+        </View>
+        <TouchableOpacity
+          className="bg-brand-500 rounded-xl py-3 items-center"
+          onPress={handleSaveProfile}
+          disabled={savingProfile}
+        >
+          {savingProfile ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text className="text-white font-bold text-sm">Salvar perfil</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+
       <SectionTitle title="Integrações" />
 
       <SettingsRow
         icon="⌚"
         label="Whoop"
-        sub="Sincroniza strain, recovery e calorias dos últimos 30 dias"
-        action={syncWhoop}
+        sub="Lista atividades recentes para importar kcal, tempo e FC media"
+        action={() => previewSync("whoop")}
         actionLabel={
           whoopSync === "success" ? "✓ Feito" :
-          whoopSync === "error" ? "Falhou" : "Sincronizar"
+          whoopSync === "error" ? "Falhou" : "Verificar"
         }
         actionColor={
           whoopSync === "success" ? "text-brand-400" :
@@ -187,11 +319,11 @@ export default function ConfiguracoesScreen() {
       <SettingsRow
         icon="🏃"
         label="Garmin Connect"
-        sub="Importa corridas recentes automaticamente (API não-oficial)"
-        action={syncGarmin}
+        sub="Lista corridas e importa intervalos sem kcal duplicada"
+        action={() => previewSync("garmin")}
         actionLabel={
           garminSync === "success" ? "✓ Feito" :
-          garminSync === "error" ? "Falhou" : "Sincronizar"
+          garminSync === "error" ? "Falhou" : "Verificar"
         }
         actionColor={
           garminSync === "success" ? "text-brand-400" :
@@ -202,7 +334,7 @@ export default function ConfiguracoesScreen() {
 
       <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2">
         <Text className="text-surface-600 text-xs leading-5">
-          💡 Se a sincronização do Garmin falhar, use o botão <Text className="text-white">+ Nova</Text> na aba Corridas para inserir manualmente. O fallback é sempre disponível.
+          O Whoop preenche atividades no registro diario. O Garmin cria corridas com intervalos. Itens ja importados aparecem travados na selecao.
         </Text>
       </View>
 
@@ -250,5 +382,97 @@ export default function ConfiguracoesScreen() {
         </Text>
       </View>
     </ScrollView>
+
+    <Modal visible={!!syncProvider} animationType="slide" transparent>
+      <View className="flex-1 justify-end bg-black/40">
+        <View className="bg-surface-800 border border-surface-700/60 rounded-t-3xl px-5 pt-6 pb-10 gap-4 max-h-[80%]">
+          <View className="w-10 h-1 bg-surface-600 rounded-full self-center mb-2" />
+          <View className="flex-row justify-between items-center">
+            <Text className="text-white text-xl font-bold">
+              {syncProvider === "whoop" ? "Atividades Whoop" : "Corridas Garmin"}
+            </Text>
+            <TouchableOpacity onPress={() => setSyncProvider(null)}>
+              <Text className="text-surface-500 text-sm font-semibold">Fechar</Text>
+            </TouchableOpacity>
+          </View>
+          <Text className="text-surface-500 text-xs leading-5">
+            Selecione somente o que deseja importar. Itens ja importados ficam marcados.
+          </Text>
+
+          <ScrollView className="max-h-[360px]">
+            {candidates.length === 0 ? (
+              <Text className="text-surface-500 text-sm py-8 text-center">
+                Nenhum item encontrado.
+              </Text>
+            ) : (
+              candidates.map((candidate) => {
+                const selected = selectedIds.has(candidate.id);
+                return (
+                  <TouchableOpacity
+                    key={candidate.id}
+                    disabled={candidate.already_imported}
+                    onPress={() => {
+                      setSelectedIds((current) => {
+                        const next = new Set(current);
+                        if (next.has(candidate.id)) next.delete(candidate.id);
+                        else next.add(candidate.id);
+                        return next;
+                      });
+                    }}
+                    className={`rounded-2xl px-4 py-3 mb-2 border ${
+                      candidate.already_imported
+                        ? "bg-surface-700/40 border-surface-700"
+                        : selected
+                        ? "bg-brand-500/10 border-brand-500/30"
+                        : "bg-surface-700/50 border-surface-700"
+                    }`}
+                  >
+                    <View className="flex-row items-start gap-3">
+                      <View
+                        className={`w-5 h-5 rounded-md border-2 items-center justify-center mt-0.5 ${
+                          selected || candidate.already_imported
+                            ? "bg-brand-500 border-brand-600"
+                            : "border-surface-600"
+                        }`}
+                      >
+                        {(selected || candidate.already_imported) && (
+                          <Text className="text-white text-xs font-bold">✓</Text>
+                        )}
+                      </View>
+                      <View className="flex-1">
+                        <View className="flex-row items-center gap-2">
+                          <Text className="text-white text-sm font-bold flex-1">
+                            {candidate.name}
+                          </Text>
+                          {candidate.already_imported && (
+                            <Text className="text-brand-400 text-xs font-semibold">Importado</Text>
+                          )}
+                        </View>
+                        <Text className="text-surface-500 text-xs mt-1">
+                          {formatCandidateMeta(candidate)}
+                        </Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </ScrollView>
+
+          <TouchableOpacity
+            className="bg-brand-500 rounded-xl py-3.5 items-center"
+            onPress={importSelected}
+            disabled={whoopSync === "loading" || garminSync === "loading"}
+          >
+            {whoopSync === "loading" || garminSync === "loading" ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text className="text-white font-bold">Importar selecionados</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }
