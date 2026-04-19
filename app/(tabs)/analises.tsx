@@ -16,6 +16,8 @@ import {
   endOfMonth,
   endOfWeek,
   format,
+  isValid,
+  parse,
   parseISO,
   startOfMonth,
   startOfWeek,
@@ -26,6 +28,7 @@ import { getDailyLogs, getRunActivities, upsertDailyLog } from "@/lib/api";
 import { computeDailyCalculations, formatDuration, formatPace } from "@/utils/calculations";
 import { useUserMetrics } from "@/hooks/useUserProfile";
 import { Card, SectionLabel } from "@/components/ui/Card";
+import { Ionicons } from "@expo/vector-icons";
 import { RunActivity } from "@/types";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 
@@ -523,8 +526,9 @@ function StatRow({ label, value, valueColor }: { label: string; value: string; v
 export default function AnalisesScreen() {
   const [period, setPeriod] = useState<Period>("90d");
   const [chartWidth, setChartWidth] = useState(SCREEN_FALLBACK);
-  const [maVisible, setMaVisible] = useState({ mm7: true, mm14: true, mm30: true });
-  const [editingWeight, setEditingWeight] = useState<{ date: string; weight: string } | null>(null);
+  const [maVisible, setMaVisible] = useState({ mm7: true, mm14: false, mm30: false });
+  const [tableOpen, setTableOpen] = useState(false);
+  const [editingWeight, setEditingWeight] = useState<{ date: string; dateStr: string; weight: string; isNew?: boolean } | null>(null);
   const from = periodToDate(period);
   const now = useMemo(() => new Date(), []);
   const qc = useQueryClient();
@@ -636,8 +640,18 @@ export default function AnalisesScreen() {
       return;
     }
 
+    let saveDate = editingWeight.date;
+    if (editingWeight.isNew) {
+      const parsed = parse(editingWeight.dateStr.trim(), "dd/MM/yyyy", new Date());
+      if (!isValid(parsed)) {
+        Alert.alert("Data inválida", "Use o formato dd/MM/yyyy.");
+        return;
+      }
+      saveDate = format(parsed, "yyyy-MM-dd");
+    }
+
     try {
-      await saveWeight({ date: editingWeight.date, weight_kg: value });
+      await saveWeight({ date: saveDate, weight_kg: value });
       setEditingWeight(null);
     } catch (err: unknown) {
       Alert.alert("Erro", err instanceof Error ? err.message : "Nao foi possivel salvar o peso.");
@@ -744,14 +758,45 @@ export default function AnalisesScreen() {
                 <StatRow label="Menor (periodo)" value={`${Math.min(...weightData).toFixed(1)} kg`} />
                 <StatRow label="Maior (periodo)" value={`${Math.max(...weightData).toFixed(1)} kg`} />
                 <View className="gap-2 pt-2">
-                  <Text className="text-surface-500 text-xs font-semibold uppercase tracking-wider">
-                    Tabela de pesos do periodo
-                  </Text>
-                  {[...weightRows].reverse().map((row) => (
+                  <View className="flex-row justify-between items-center">
+                    <TouchableOpacity
+                      onPress={() => setTableOpen((v) => !v)}
+                      className="flex-row items-center gap-2"
+                    >
+                      <Text className="text-surface-500 text-xs font-semibold uppercase tracking-wider">
+                        Tabela de pesos do periodo
+                      </Text>
+                      <Ionicons
+                        name={tableOpen ? "chevron-up" : "chevron-down"}
+                        size={13}
+                        color="#72737f"
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const today = format(new Date(), "yyyy-MM-dd");
+                        setEditingWeight({
+                          date: today,
+                          dateStr: format(new Date(), "dd/MM/yyyy"),
+                          weight: "",
+                          isNew: true,
+                        });
+                      }}
+                      className="flex-row items-center gap-1 bg-brand-500/15 border border-brand-500/30 rounded-lg px-2.5 py-1.5"
+                    >
+                      <Ionicons name="add" size={13} color="#10b981" />
+                      <Text className="text-brand-400 text-xs font-semibold">Peso</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {tableOpen && weightRows.map((row) => (
                     <TouchableOpacity
                       key={row.date}
                       className="flex-row justify-between items-center py-2.5 border-b border-surface-700/40"
-                      onPress={() => setEditingWeight({ date: row.date, weight: row.weight.toFixed(1) })}
+                      onPress={() => setEditingWeight({
+                        date: row.date,
+                        dateStr: format(parseISO(row.date), "dd/MM/yyyy"),
+                        weight: row.weight.toFixed(1),
+                      })}
                     >
                       <Text className="text-surface-400 text-sm">
                         {format(parseISO(row.date), "dd/MM/yy")}
@@ -855,10 +900,29 @@ export default function AnalisesScreen() {
       visible={!!editingWeight}
       onClose={() => setEditingWeight(null)}
     >
-      <Text className="text-white text-xl font-bold">Editar peso</Text>
-      <Text className="text-surface-500 text-xs -mt-2">
-        {editingWeight ? format(parseISO(editingWeight.date), "dd/MM/yyyy") : ""}
+      <Text className="text-white text-xl font-bold">
+        {editingWeight?.isNew ? "Novo peso" : "Editar peso"}
       </Text>
+      {editingWeight?.isNew ? (
+        <View className="gap-1.5 -mt-1">
+          <Text className="text-surface-500 text-xs font-semibold">Data (dd/MM/yyyy)</Text>
+          <TextInput
+            className="bg-surface-700 border border-surface-600/40 text-white rounded-xl px-4 py-3"
+            value={editingWeight.dateStr}
+            onChangeText={(v) =>
+              setEditingWeight((cur) => cur ? { ...cur, dateStr: v } : cur)
+            }
+            keyboardType="numbers-and-punctuation"
+            placeholder="17/04/2025"
+            placeholderTextColor="#4a4b58"
+            selectTextOnFocus
+          />
+        </View>
+      ) : (
+        <Text className="text-surface-500 text-xs -mt-2">
+          {editingWeight ? format(parseISO(editingWeight.date), "dd/MM/yyyy") : ""}
+        </Text>
+      )}
       <View className="gap-1.5">
         <Text className="text-surface-500 text-xs font-semibold">Peso (kg)</Text>
         <TextInput

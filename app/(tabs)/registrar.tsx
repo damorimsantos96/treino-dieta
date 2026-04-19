@@ -10,8 +10,8 @@ import {
   Platform,
   ActivityIndicator,
 } from "react-native";
-import { useFocusEffect } from "expo-router";
-import { format } from "date-fns";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { addDays, format, parseISO, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useDailyLog, useUpsertDailyLog } from "@/hooks/useDailyLog";
 import { useUserMetrics } from "@/hooks/useUserProfile";
@@ -158,14 +158,20 @@ function validateNumber(
 }
 
 export default function RegistrarScreen() {
-  const [today, setToday] = useState(() => new Date());
+  const { date: dateParam } = useLocalSearchParams<{ date?: string }>();
+  const [today, setToday] = useState(() =>
+    dateParam ? parseISO(String(dateParam)) : new Date()
+  );
   const [saunaOpen, setSaunaOpen] = useState(false);
   const [outrosOpen, setOutrosOpen] = useState(false);
+  const isToday = format(today, "yyyy-MM-dd") === format(new Date(), "yyyy-MM-dd");
 
   useFocusEffect(
     useCallback(() => {
-      setToday(new Date());
-    }, [])
+      if (dateParam) {
+        setToday(parseISO(String(dateParam)));
+      }
+    }, [dateParam])
   );
 
   const { data: existing, isLoading } = useDailyLog(today);
@@ -334,11 +340,36 @@ export default function RegistrarScreen() {
         keyboardShouldPersistTaps="handled"
       >
         {/* Header */}
-        <View>
-          <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest capitalize">
-            {dateLabel}
-          </Text>
-          <Text className="text-white text-3xl font-bold tracking-tight">Registrar</Text>
+        <View className="flex-row justify-between items-end">
+          <View>
+            <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest capitalize">
+              {dateLabel}
+            </Text>
+            <Text className="text-white text-3xl font-bold tracking-tight">Registrar</Text>
+          </View>
+          <View className="flex-row items-center gap-0.5 pb-1">
+            <TouchableOpacity
+              onPress={() => setToday((d) => subDays(d, 1))}
+              className="p-2"
+            >
+              <Ionicons name="chevron-back" size={20} color="#72737f" />
+            </TouchableOpacity>
+            {!isToday && (
+              <TouchableOpacity
+                onPress={() => setToday(new Date())}
+                className="px-2 py-1 bg-surface-700/50 rounded-lg"
+              >
+                <Text className="text-brand-400 text-xs font-semibold">Hoje</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={() => setToday((d) => addDays(d, 1))}
+              disabled={isToday}
+              className="p-2"
+            >
+              <Ionicons name="chevron-forward" size={20} color={isToday ? "#2c2d36" : "#72737f"} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* ── Corpo ─────────────────────────────────────── */}

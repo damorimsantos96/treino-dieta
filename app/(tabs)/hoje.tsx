@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { format } from "date-fns";
+import { addDays, format, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useDailyLog } from "@/hooks/useDailyLog";
 import { useUserMetrics } from "@/hooks/useUserProfile";
@@ -56,6 +56,8 @@ export default function HojeScreen() {
 
   const dateLabel = format(today, "EEEE, d 'de' MMMM", { locale: ptBR });
   const dateCapitalized = dateLabel.charAt(0).toUpperCase() + dateLabel.slice(1);
+  const isToday = format(today, "yyyy-MM-dd") === format(new Date(), "yyyy-MM-dd");
+  const dateStr = format(today, "yyyy-MM-dd");
 
   return (
     <ScrollView
@@ -71,11 +73,25 @@ export default function HojeScreen() {
     >
       {/* ── Header ─────────────────────────────────────────── */}
       <View className="flex-row justify-between items-center">
-        <View>
-          <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
-            {dateCapitalized}
-          </Text>
-          <Text className="text-white text-3xl font-bold mt-0.5 tracking-tight">Hoje</Text>
+        <View className="flex-row items-center gap-1">
+          <TouchableOpacity onPress={() => setToday((d) => subDays(d, 1))} className="p-1">
+            <Ionicons name="chevron-back" size={20} color="#72737f" />
+          </TouchableOpacity>
+          <View>
+            <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
+              {dateCapitalized}
+            </Text>
+            <Text className="text-white text-3xl font-bold mt-0.5 tracking-tight">
+              {isToday ? "Hoje" : format(today, "d MMM", { locale: ptBR })}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => setToday((d) => addDays(d, 1))}
+            disabled={isToday}
+            className="p-1"
+          >
+            <Ionicons name="chevron-forward" size={20} color={isToday ? "#2c2d36" : "#72737f"} />
+          </TouchableOpacity>
         </View>
         <View className="flex-row items-center gap-2">
           {log?.weight_kg && (
@@ -114,7 +130,7 @@ export default function HojeScreen() {
           </View>
           <TouchableOpacity
             className="bg-brand-500 rounded-xl px-8 py-3 mt-1"
-            onPress={() => router.push("/(tabs)/registrar")}
+            onPress={() => router.push({ pathname: "/(tabs)/registrar", params: { date: dateStr } })}
           >
             <Text className="text-white font-bold text-sm">Registrar agora</Text>
           </TouchableOpacity>
@@ -286,7 +302,7 @@ export default function HojeScreen() {
           {/* ── Edit button ──────────────────────────────── */}
           <TouchableOpacity
             className="flex-row items-center justify-center gap-2 bg-surface-800 border border-surface-700/60 rounded-xl py-3.5"
-            onPress={() => router.push("/(tabs)/registrar")}
+            onPress={() => router.push({ pathname: "/(tabs)/registrar", params: { date: dateStr } })}
           >
             <Ionicons name="create-outline" size={16} color="#72737f" />
             <Text className="text-surface-400 font-semibold text-sm">Editar registro</Text>
