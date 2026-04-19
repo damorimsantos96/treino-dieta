@@ -182,61 +182,6 @@ function IntervalRow({ interval }: { interval: RunSession }) {
   );
 }
 
-function ActivityBlock({
-  activity,
-  onDelete,
-}: {
-  activity: RunActivity;
-  onDelete: (id: string, date: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const km = activityDistance(activity);
-  const duration = activityDuration(activity);
-  const pace = km > 0 && duration > 0 ? duration / km : activity.avg_pace_min_km;
-  const intervals = activity.intervals ?? [];
-
-  return (
-    <TouchableOpacity
-      onPress={() => setExpanded((v) => !v)}
-      onLongPress={() =>
-        Alert.alert("Excluir corrida?", "Remove a sessao e seus intervalos.", [
-          { text: "Cancelar", style: "cancel" },
-          { text: "Excluir", style: "destructive", onPress: () => onDelete(activity.id, activity.date) },
-        ])
-      }
-      className="border-t border-surface-700/40 pt-3 mt-3"
-      activeOpacity={0.75}
-    >
-      <View className="flex-row justify-between items-center gap-3">
-        <View className="flex-row items-center gap-2 flex-1">
-          <Ionicons
-            name={expanded ? "chevron-down" : "chevron-forward"}
-            size={14}
-            color="#72737f"
-          />
-          <Text className="text-white text-sm font-bold">
-            {activity.name ?? "Corrida"}
-          </Text>
-          {intervals.length > 0 && (
-            <View className="bg-surface-700/60 rounded-md px-1.5 py-0.5">
-              <Text className="text-surface-500 text-xs">{intervals.length} int.</Text>
-            </View>
-          )}
-        </View>
-        <Text className="text-white text-sm font-bold">{km.toFixed(2)} km</Text>
-      </View>
-
-      {expanded && intervals.length > 0 && (
-        <View className="mt-2">
-          {intervals.map((interval) => (
-            <IntervalRow key={interval.id} interval={interval} />
-          ))}
-        </View>
-      )}
-    </TouchableOpacity>
-  );
-}
-
 function DayCard({
   date,
   activities,
@@ -246,6 +191,7 @@ function DayCard({
   activities: RunActivity[];
   onDelete: (id: string, date: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const totalKm = activities.reduce((sum, item) => sum + activityDistance(item), 0);
   const totalDuration = activities.reduce((sum, item) => sum + activityDuration(item), 0);
   const totalKcal = activities.reduce((sum, item) => sum + (item.calories_kcal ?? 0), 0);
@@ -253,10 +199,30 @@ function DayCard({
   const avgPace = totalKm > 0 && totalDuration > 0 ? totalDuration / totalKm : null;
   const totalIntervals = activities.reduce((sum, item) => sum + (item.intervals?.length ?? 0), 0);
   const dateLabel = format(parseISO(date), "d 'de' MMM", { locale: ptBR });
+  const allIntervals = activities.flatMap((a) =>
+    (a.intervals ?? []).map((iv) => ({ ...iv, activityName: a.name ?? "Corrida", activityId: a.id }))
+  );
 
   return (
-    <View className="bg-surface-800 border border-surface-700/60 rounded-2xl px-4 py-3.5 mb-2.5">
+    <TouchableOpacity
+      activeOpacity={0.85}
+      className="bg-surface-800 border border-surface-700/60 rounded-2xl px-4 py-3.5 mb-2.5"
+      onPress={() => setExpanded((v) => !v)}
+      onLongPress={() => {
+        if (activities.length === 1) {
+          Alert.alert("Excluir corrida?", "Remove a sessao e seus intervalos.", [
+            { text: "Cancelar", style: "cancel" },
+            { text: "Excluir", style: "destructive", onPress: () => onDelete(activities[0].id, date) },
+          ]);
+        }
+      }}
+    >
       <View className="flex-row items-center gap-2 flex-wrap">
+        <Ionicons
+          name={expanded ? "chevron-down" : "chevron-forward"}
+          size={14}
+          color="#72737f"
+        />
         <Text className="text-surface-400 text-sm font-medium">{dateLabel}</Text>
         <View className="bg-surface-700/60 rounded-md px-1.5 py-0.5">
           <Text className="text-surface-500 text-xs">
@@ -278,10 +244,24 @@ function DayCard({
         {totalKcal > 0 && <Text className="text-surface-500 text-xs">{Math.round(totalKcal)} kcal</Text>}
       </View>
 
-      {activities.map((activity) => (
-        <ActivityBlock key={activity.id} activity={activity} onDelete={onDelete} />
-      ))}
-    </View>
+      {expanded && allIntervals.length > 0 && (
+        <View className="mt-3 border-t border-surface-700/40 pt-1">
+          {activities.length > 1 &&
+            activities.map((activity) => (
+              <View key={activity.id} className="mt-2">
+                <Text className="text-surface-400 text-xs font-semibold mb-1">{activity.name ?? "Corrida"}</Text>
+                {(activity.intervals ?? []).map((iv) => (
+                  <IntervalRow key={iv.id} interval={iv} />
+                ))}
+              </View>
+            ))}
+          {activities.length === 1 &&
+            (activities[0].intervals ?? []).map((iv) => (
+              <IntervalRow key={iv.id} interval={iv} />
+            ))}
+        </View>
+      )}
+    </TouchableOpacity>
   );
 }
 
