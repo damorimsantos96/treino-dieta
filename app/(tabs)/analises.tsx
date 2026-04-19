@@ -23,6 +23,7 @@ import {
   startOfWeek,
   subDays,
   subMonths,
+  subYears,
 } from "date-fns";
 import { getDailyLogs, getRunActivities, upsertDailyLog } from "@/lib/api";
 import { computeDailyCalculations, formatDuration, formatPace } from "@/utils/calculations";
@@ -38,13 +39,14 @@ const CHART_RIGHT = 50;
 const CHART_BOTTOM = 24;
 const CHART_TOP = 8;
 
-type Period = "30d" | "90d" | "6m" | "1y";
+type Period = "30d" | "90d" | "6m" | "1y" | "max";
 
 const PERIODS: { key: Period; label: string }[] = [
   { key: "30d", label: "30d" },
   { key: "90d", label: "90d" },
   { key: "6m", label: "6m" },
   { key: "1y", label: "1a" },
+  { key: "max", label: "Máx." },
 ];
 
 function periodToDate(period: Period): Date {
@@ -52,6 +54,7 @@ function periodToDate(period: Period): Date {
   if (period === "30d") return subDays(now, 30);
   if (period === "90d") return subDays(now, 90);
   if (period === "6m") return subMonths(now, 6);
+  if (period === "max") return subYears(now, 10);
   return subMonths(now, 12);
 }
 
@@ -175,6 +178,7 @@ function MultiSparkLine({
   chartWidth?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
+  const [hovered, setHovered] = useState<number | null>(null);
   if (series.length === 0) return null;
   const allValues = series.flatMap((item) => item.data).filter((value) => Number.isFinite(value));
   if (allValues.length < 2) return null;
@@ -186,8 +190,9 @@ function MultiSparkLine({
   const plotWidth = Math.max(160, chartWidth - CHART_LEFT - CHART_RIGHT);
   const plotHeight = height - CHART_TOP;
   const pointW = maxLength > 1 ? plotWidth / (maxLength - 1) : plotWidth;
-  const selectedValues = selected != null
-    ? series.map((line) => line.data[selected]).filter(Number.isFinite)
+  const activeIndex = hovered ?? selected;
+  const selectedValues = activeIndex != null
+    ? series.map((line) => line.data[activeIndex]).filter(Number.isFinite)
     : [];
 
   return (
@@ -228,15 +233,15 @@ function MultiSparkLine({
                     borderRadius: 2,
                     transformOrigin: "left center",
                     transform: [{ rotate: `${angle}deg` }],
-                    opacity: selected != null && Math.round(selected) === index ? 1 : 0.85,
+                    opacity: activeIndex != null && Math.round(activeIndex) === index ? 1 : 0.85,
                   }}
                 />
               );
             })
           )}
-          {selected != null && series[0]?.data[selected] != null && (() => {
-            const value = series[0].data[selected];
-            const cx = selected * pointW;
+          {activeIndex != null && series[0]?.data[activeIndex] != null && (() => {
+            const value = series[0].data[activeIndex];
+            const cx = activeIndex * pointW;
             const cy = plotHeight - ((value - min) / range) * (plotHeight - 8) - 4;
             return (
               <View
@@ -268,6 +273,13 @@ function MultiSparkLine({
             const clamped = Math.max(0, Math.min(maxLength - 1, index));
             setSelected((prev) => prev === clamped ? null : clamped);
           }}
+          {...({
+            onPointerMove: (e: any) => {
+              const x = e.nativeEvent.offsetX ?? e.nativeEvent.locationX;
+              setHovered(Math.max(0, Math.min(maxLength - 1, Math.round(x / pointW))));
+            },
+            onPointerLeave: () => setHovered(null),
+          } as any)}
         />
         <View
           className="absolute bottom-0 flex-row justify-between"
@@ -280,15 +292,15 @@ function MultiSparkLine({
           ))}
         </View>
       </View>
-      {selected != null && selectedValues.length > 0 && (
+      {activeIndex != null && selectedValues.length > 0 && (
         <View className="bg-surface-700/50 border border-surface-600/40 rounded-xl px-3 py-2">
-          <Text className="text-surface-400 text-xs mb-1">{labels[selected]}</Text>
+          <Text className="text-surface-400 text-xs mb-1">{labels[activeIndex]}</Text>
           <View className="flex-row gap-4 flex-wrap">
-            {series.map((line, i) => (
+            {series.map((line) => (
               <View key={line.label} className="flex-row items-center gap-1.5">
                 <View className="w-2 h-2 rounded-full" style={{ backgroundColor: line.color }} />
                 <Text className="text-white text-xs font-semibold">
-                  {line.label}: {line.data[selected]?.toFixed(1)} kg
+                  {line.label}: {line.data[activeIndex]?.toFixed(1)} kg
                 </Text>
               </View>
             ))}
@@ -311,7 +323,7 @@ type RunBucketMode = "day" | "week" | "month";
 
 function runBucketMode(period: Period): RunBucketMode {
   if (period === "30d") return "day";
-  if (period === "1y") return "month";
+  if (period === "1y" || period === "max") return "month";
   return "week";
 }
 
