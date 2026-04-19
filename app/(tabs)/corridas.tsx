@@ -207,31 +207,23 @@ function ActivityBlock({
       className="border-t border-surface-700/40 pt-3 mt-3"
       activeOpacity={0.75}
     >
-      <View className="flex-row justify-between items-start gap-3">
-        <View className="flex-1">
-          <View className="flex-row items-center gap-2">
-            <Ionicons
-              name={expanded ? "chevron-down" : "chevron-forward"}
-              size={14}
-              color="#72737f"
-            />
-            <Text className="text-white text-sm font-bold">
-              {activity.name ?? "Corrida"}
-            </Text>
+      <View className="flex-row justify-between items-center gap-3">
+        <View className="flex-row items-center gap-2 flex-1">
+          <Ionicons
+            name={expanded ? "chevron-down" : "chevron-forward"}
+            size={14}
+            color="#72737f"
+          />
+          <Text className="text-white text-sm font-bold">
+            {activity.name ?? "Corrida"}
+          </Text>
+          {intervals.length > 0 && (
             <View className="bg-surface-700/60 rounded-md px-1.5 py-0.5">
-              <Text className="text-surface-500 text-xs">{intervals.length || 1} int.</Text>
+              <Text className="text-surface-500 text-xs">{intervals.length} int.</Text>
             </View>
-          </View>
-          <View className="flex-row gap-4 mt-2 flex-wrap">
-            {duration > 0 && <Text className="text-surface-500 text-xs">{formatDuration(duration)}</Text>}
-            {pace && <Text className="text-surface-500 text-xs">{formatPace(pace)}/km</Text>}
-            {activity.avg_hr && <Text className="text-surface-500 text-xs">{activity.avg_hr} bpm</Text>}
-            {activity.calories_kcal && (
-              <Text className="text-surface-500 text-xs">{Math.round(activity.calories_kcal)} kcal</Text>
-            )}
-          </View>
+          )}
         </View>
-        <Text className="text-white text-base font-bold">{km.toFixed(2)} km</Text>
+        <Text className="text-white text-sm font-bold">{km.toFixed(2)} km</Text>
       </View>
 
       {expanded && intervals.length > 0 && (
@@ -379,6 +371,7 @@ function VolumePaceChart({
   chartWidth?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
+  const [hovered, setHovered] = useState<number | null>(null);
   const data = useMemo(() => buildRunBuckets(activities, from, to, mode), [activities, from, to, mode]);
   if (data.length === 0) return null;
 
@@ -393,7 +386,8 @@ function VolumePaceChart({
   const pointW = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth;
   const slotWidth = plotWidth / data.length;
   const barWidth = Math.max(2, Math.min(30, slotWidth * 0.72));
-  const selectedItem = selected == null ? null : data[selected];
+  const activeIndex = hovered ?? selected;
+  const selectedItem = activeIndex == null ? null : data[activeIndex];
 
   return (
     <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 mb-4 gap-3">
@@ -441,9 +435,13 @@ function VolumePaceChart({
           {data.map((item, index) => (
             <TouchableOpacity
               key={`${item.label}-${index}`}
-              onPress={() => setSelected(index)}
+              onPress={() => setSelected((prev) => prev === index ? null : index)}
               className="items-center justify-end"
               style={{ width: slotWidth, height: plotHeight }}
+              {...({
+                onPointerEnter: () => setHovered(index),
+                onPointerLeave: () => setHovered(null),
+              } as any)}
             >
               <View
                 style={{
@@ -451,7 +449,7 @@ function VolumePaceChart({
                   height: Math.max(2, (item.distance / maxKm) * (plotHeight - 8)),
                   backgroundColor: "#3b82f6",
                   borderRadius: 4,
-                  opacity: selected === index ? 1 : 0.82,
+                  opacity: activeIndex === index ? 1 : 0.82,
                 }}
               />
             </TouchableOpacity>
