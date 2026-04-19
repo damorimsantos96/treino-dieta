@@ -64,19 +64,39 @@ function parsePositiveNumber(value: string, errors: string[]): number | null {
     errors.push("Valor: informe um número.");
     return null;
   }
-
   const n = Number(raw.replace(",", "."));
   if (!Number.isFinite(n)) {
     errors.push("Valor: informe um número válido.");
     return null;
   }
-  if (n <= 0) {
-    errors.push("Valor: informe um número maior que zero.");
-  }
-  if (n > 100000) {
-    errors.push("Valor: máximo 100000.");
-  }
+  if (n <= 0) errors.push("Valor: informe um número maior que zero.");
+  if (n > 100000) errors.push("Valor: máximo 100000.");
   return n;
+}
+
+function parseTimeInput(value: string, errors: string[]): number | null {
+  const raw = value.trim();
+  if (!raw) { errors.push("Tempo: informe no formato mm:ss ou hh:mm:ss."); return null; }
+  const parts = raw.split(":").map(Number);
+  if (parts.some((p) => !Number.isFinite(p) || p < 0)) {
+    errors.push("Tempo: use o formato mm:ss ou hh:mm:ss.");
+    return null;
+  }
+  let seconds = 0;
+  if (parts.length === 2) seconds = parts[0] * 60 + parts[1];
+  else if (parts.length === 3) seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+  else { errors.push("Tempo: use o formato mm:ss ou hh:mm:ss."); return null; }
+  if (seconds <= 0) errors.push("Tempo: deve ser maior que zero.");
+  return seconds;
+}
+
+function parseRoundsReps(rounds: string, reps: string, errors: string[]): number | null {
+  const r = parseInt(rounds.trim(), 10);
+  const p = parseInt(reps.trim(), 10);
+  if (!Number.isFinite(r) || r < 0) { errors.push("Rounds: informe um número inteiro."); return null; }
+  if (!Number.isFinite(p) || p < 0) { errors.push("Reps: informe um número inteiro."); return null; }
+  if (r === 0 && p === 0) { errors.push("Informe pelo menos um round ou rep."); return null; }
+  return r + p / 100;
 }
 
 function MovementCard({
@@ -169,6 +189,8 @@ export default function PRsScreen() {
   const [attemptForm, setAttemptForm] = useState({
     date: format(new Date(), "yyyy-MM-dd"),
     value: "",
+    rounds: "",
+    reps: "",
     notes: "",
   });
 
@@ -194,11 +216,19 @@ export default function PRsScreen() {
   }
 
   async function handleSaveAttempt() {
-    if (!selectedMovement || !attemptForm.value) return;
+    if (!selectedMovement) return;
     const errors: string[] = [];
     const date = attemptForm.date.trim();
     if (!isIsoDate(date)) errors.push("Data: use o formato YYYY-MM-DD.");
-    const value = parsePositiveNumber(attemptForm.value, errors);
+
+    let value: number | null = null;
+    if (selectedMovement.unit === "time_sec") {
+      value = parseTimeInput(attemptForm.value, errors);
+    } else if (selectedMovement.unit === "rounds_reps") {
+      value = parseRoundsReps(attemptForm.rounds, attemptForm.reps, errors);
+    } else {
+      value = parsePositiveNumber(attemptForm.value, errors);
+    }
 
     if (errors.length > 0 || value == null) {
       Alert.alert("Revise os dados", errors.join("\n"));
@@ -213,7 +243,7 @@ export default function PRsScreen() {
         notes: attemptForm.notes || null,
       });
       setSelectedMovement(null);
-      setAttemptForm({ date: format(new Date(), "yyyy-MM-dd"), value: "", notes: "" });
+      setAttemptForm({ date: format(new Date(), "yyyy-MM-dd"), value: "", rounds: "", reps: "", notes: "" });
     } catch (err: any) {
       Alert.alert("Erro", err.message);
     }
@@ -317,8 +347,12 @@ export default function PRsScreen() {
       {/* Add attempt modal */}
       <Modal visible={!!selectedMovement} animationType="slide" transparent>
         <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === "ios" ? "padding" : "height"}>
-          <View className="flex-1 justify-end">
-            <View className="bg-surface-800 border border-surface-700/60 rounded-t-3xl px-5 pt-6 pb-10 gap-4">
+          <View className="flex-1 justify-end bg-black/40">
+            <ScrollView
+              className="bg-surface-800 border border-surface-700/60 rounded-t-3xl"
+              contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 24, paddingBottom: 40, gap: 16 }}
+              keyboardShouldPersistTaps="handled"
+            >
               <View className="w-10 h-1 bg-surface-600 rounded-full self-center mb-2" />
               <View className="flex-row items-center gap-2">
                 <Ionicons name="trophy" size={18} color="#f59e0b" />
@@ -334,19 +368,46 @@ export default function PRsScreen() {
                   onChangeText={(v) => setAttemptForm((f) => ({ ...f, date: v }))}
                 />
               </View>
-              <View className="gap-1.5">
-                <Text className="text-surface-500 text-xs font-semibold">
-                  Valor ({selectedMovement ? UNIT_LABELS[selectedMovement.unit] : ""})
-                </Text>
-                <TextInput
-                  className={inputStyle}
-                  value={attemptForm.value}
-                  onChangeText={(v) => setAttemptForm((f) => ({ ...f, value: v }))}
-                  keyboardType="decimal-pad"
-                  placeholder="ex: 312 (segundos) ou 120.5 (kg)"
-                  placeholderTextColor={placeholderColor}
-                />
-              </View>
+              {selectedMovement?.unit === "rounds_reps" ? (
+                <View className="flex-row gap-3">
+                  <View className="flex-1 gap-1.5">
+                    <Text className="text-surface-500 text-xs font-semibold">Rounds</Text>
+                    <TextInput
+                      className={inputStyle}
+                      value={attemptForm.rounds}
+                      onChangeText={(v) => setAttemptForm((f) => ({ ...f, rounds: v }))}
+                      keyboardType="number-pad"
+                      placeholder="5"
+                      placeholderTextColor={placeholderColor}
+                    />
+                  </View>
+                  <View className="flex-1 gap-1.5">
+                    <Text className="text-surface-500 text-xs font-semibold">Reps</Text>
+                    <TextInput
+                      className={inputStyle}
+                      value={attemptForm.reps}
+                      onChangeText={(v) => setAttemptForm((f) => ({ ...f, reps: v }))}
+                      keyboardType="number-pad"
+                      placeholder="15"
+                      placeholderTextColor={placeholderColor}
+                    />
+                  </View>
+                </View>
+              ) : (
+                <View className="gap-1.5">
+                  <Text className="text-surface-500 text-xs font-semibold">
+                    {selectedMovement?.unit === "time_sec" ? "Tempo (mm:ss ou hh:mm:ss)" : `Valor (${selectedMovement ? UNIT_LABELS[selectedMovement.unit] : ""})`}
+                  </Text>
+                  <TextInput
+                    className={inputStyle}
+                    value={attemptForm.value}
+                    onChangeText={(v) => setAttemptForm((f) => ({ ...f, value: v }))}
+                    keyboardType={selectedMovement?.unit === "time_sec" ? "numbers-and-punctuation" : "decimal-pad"}
+                    placeholder={selectedMovement?.unit === "time_sec" ? "5:12" : "120.5"}
+                    placeholderTextColor={placeholderColor}
+                  />
+                </View>
+              )}
               <View className="gap-1.5">
                 <Text className="text-surface-500 text-xs font-semibold">Observações (opcional)</Text>
                 <TextInput
@@ -357,6 +418,31 @@ export default function PRsScreen() {
                   placeholderTextColor={placeholderColor}
                 />
               </View>
+
+              {(() => {
+                const history = attempts
+                  .filter((a) => a.movement_id === selectedMovement?.id)
+                  .sort((a, b) => b.date.localeCompare(a.date))
+                  .slice(0, 8);
+                if (history.length === 0) return null;
+                return (
+                  <View className="gap-2">
+                    <Text className="text-surface-500 text-xs font-semibold uppercase tracking-wider">Histórico</Text>
+                    {history.map((a) => (
+                      <View key={a.id} className="flex-row justify-between items-center py-2 border-b border-surface-700/40">
+                        <View className="flex-row items-center gap-2">
+                          {a.is_pr && <Ionicons name="trophy" size={12} color="#f59e0b" />}
+                          <Text className="text-surface-400 text-xs">{format(parseISO(a.date), "dd/MM/yy", { locale: ptBR })}</Text>
+                        </View>
+                        <Text className={`text-sm font-bold ${a.is_pr ? "text-brand-400" : "text-white"}`}>
+                          {selectedMovement ? formatValue(a.value, selectedMovement.unit) : a.value}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                );
+              })()}
+
               <View className="flex-row gap-3 mt-1">
                 <TouchableOpacity
                   className="flex-1 bg-surface-700 border border-surface-600/40 rounded-xl py-3.5 items-center"
@@ -376,7 +462,7 @@ export default function PRsScreen() {
                   )}
                 </TouchableOpacity>
               </View>
-            </View>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>

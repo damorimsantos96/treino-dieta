@@ -338,29 +338,6 @@ export default function ConfiguracoesScreen() {
         </Text>
       </View>
 
-      {/* ── Whoop OAuth setup ─── */}
-      <SectionTitle title="Configurar Whoop" />
-      <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2 gap-2">
-        <Text className="text-white text-sm font-medium">
-          Para configurar o Whoop pela primeira vez:
-        </Text>
-        <Text className="text-surface-600 text-xs leading-5">
-          1. Crie uma conta em developer.whoop.com{"\n"}
-          2. Crie um novo app com redirect URI: treinodieta://whoop-callback{"\n"}
-          3. Copie o Client ID e Client Secret{"\n"}
-          4. Cole nas variáveis de ambiente do Supabase (Settings → Edge Functions){"\n"}
-          5. Use o botão abaixo para autorizar o acesso
-        </Text>
-        <TouchableOpacity
-          className="bg-brand-500 rounded-xl py-2.5 items-center mt-2"
-          onPress={() => Alert.alert("Em breve", "Fluxo OAuth será adicionado na próxima versão.")}
-        >
-          <Text className="text-white font-semibold text-sm">
-            🔗 Autorizar Whoop
-          </Text>
-        </TouchableOpacity>
-      </View>
-
       {/* ── Conta ─── */}
       <SectionTitle title="Conta" />
       <SettingsRow

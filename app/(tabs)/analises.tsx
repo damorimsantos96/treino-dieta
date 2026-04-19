@@ -5,7 +5,6 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Dimensions,
 } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -27,8 +26,7 @@ import { useUserMetrics } from "@/hooks/useUserProfile";
 import { Card, SectionLabel } from "@/components/ui/Card";
 import { RunActivity } from "@/types";
 
-const { width } = Dimensions.get("window");
-const CHART_WIDTH = width - 64;
+const SCREEN_FALLBACK = 320;
 
 type Period = "30d" | "90d" | "6m" | "1y";
 
@@ -70,21 +68,23 @@ function SimpleBarChart({
   data,
   color = "#10b981",
   height = 120,
+  chartWidth = SCREEN_FALLBACK,
 }: {
   data: { label: string; value: number }[];
   color?: string;
   height?: number;
+  chartWidth?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   if (data.length === 0) return null;
 
   const max = Math.max(...data.map((item) => item.value), 1);
-  const barWidth = Math.max(4, Math.min(28, (CHART_WIDTH - 32) / data.length - 3));
+  const barWidth = Math.max(4, Math.min(28, (chartWidth - 32) / data.length - 3));
   const selectedItem = selected == null ? null : data[selected];
 
   return (
     <View className="gap-2">
-      <View style={{ height: height + 24, width: CHART_WIDTH }}>
+      <View style={{ height: height + 24, width: chartWidth }}>
         <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">
           {Math.round(max).toLocaleString()}
         </Text>
@@ -135,11 +135,14 @@ function MultiSparkLine({
   labels,
   series,
   height = 120,
+  chartWidth = SCREEN_FALLBACK,
 }: {
   labels: string[];
   series: { label: string; color: string; data: number[] }[];
   height?: number;
+  chartWidth?: number;
 }) {
+  const [selected, setSelected] = useState<number | null>(null);
   const allValues = series.flatMap((item) => item.data).filter((value) => Number.isFinite(value));
   if (allValues.length < 2) return null;
 
@@ -147,14 +150,17 @@ function MultiSparkLine({
   const max = Math.max(...allValues);
   const range = max - min || 1;
   const maxLength = Math.max(...series.map((item) => item.data.length));
-  const pointW = maxLength > 1 ? CHART_WIDTH / (maxLength - 1) : CHART_WIDTH;
+  const pointW = maxLength > 1 ? chartWidth / (maxLength - 1) : chartWidth;
+  const selectedValues = selected != null
+    ? series.map((line) => line.data[selected]).filter(Number.isFinite)
+    : [];
 
   return (
     <View className="gap-3">
-      <View style={{ height: height + 24, position: "relative", width: CHART_WIDTH }}>
+      <View style={{ height: height + 24, position: "relative", width: chartWidth }}>
         <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">{max.toFixed(1)} kg</Text>
         <Text className="absolute left-0 bottom-6 text-surface-600 text-[10px]">{min.toFixed(1)} kg</Text>
-        <View className="absolute left-0 right-0 bottom-6" style={{ height }}>
+        <View pointerEvents="none" className="absolute left-0 right-0 bottom-6" style={{ height }}>
           {series.map((line) =>
             line.data.map((value, index) => {
               if (index === 0) return null;
@@ -178,13 +184,42 @@ function MultiSparkLine({
                     borderRadius: 2,
                     transformOrigin: "left center",
                     transform: [{ rotate: `${angle}deg` }],
-                    opacity: 0.9,
+                    opacity: selected != null && Math.round(selected) === index ? 1 : 0.85,
                   }}
                 />
               );
             })
           )}
+          {selected != null && series[0]?.data[selected] != null && (() => {
+            const value = series[0].data[selected];
+            const cx = selected * pointW;
+            const cy = height - ((value - min) / range) * height;
+            return (
+              <View
+                style={{
+                  position: "absolute",
+                  left: cx - 4,
+                  top: cy - 4,
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: series[0].color,
+                }}
+              />
+            );
+          })()}
         </View>
+        <TouchableOpacity
+          activeOpacity={1}
+          className="absolute left-0 right-0 bottom-6"
+          style={{ height }}
+          onPress={(e) => {
+            const x = e.nativeEvent.locationX;
+            const index = Math.round(x / pointW);
+            const clamped = Math.max(0, Math.min(maxLength - 1, index));
+            setSelected((prev) => prev === clamped ? null : clamped);
+          }}
+        />
         <View className="absolute left-0 right-0 bottom-0 flex-row justify-between">
           {[0, Math.floor(labels.length / 2), labels.length - 1].map((index) => (
             <Text key={`${labels[index]}-${index}`} className="text-surface-600 text-[10px]">
@@ -193,6 +228,21 @@ function MultiSparkLine({
           ))}
         </View>
       </View>
+      {selected != null && selectedValues.length > 0 && (
+        <View className="bg-surface-700/50 border border-surface-600/40 rounded-xl px-3 py-2">
+          <Text className="text-surface-400 text-xs mb-1">{labels[selected]}</Text>
+          <View className="flex-row gap-4 flex-wrap">
+            {series.map((line, i) => (
+              <View key={line.label} className="flex-row items-center gap-1.5">
+                <View className="w-2 h-2 rounded-full" style={{ backgroundColor: line.color }} />
+                <Text className="text-white text-xs font-semibold">
+                  {line.label}: {line.data[selected]?.toFixed(1)} kg
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
       <View className="flex-row flex-wrap gap-3">
         {series.map((line) => (
           <View key={line.label} className="flex-row items-center gap-1.5">
@@ -261,11 +311,13 @@ function RunVolumePaceChart({
   from,
   to,
   period,
+  chartWidth = SCREEN_FALLBACK,
 }: {
   activities: RunActivity[];
   from: Date;
   to: Date;
   period: Period;
+  chartWidth?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const mode = runBucketMode(period);
@@ -278,8 +330,8 @@ function RunVolumePaceChart({
   const minPace = paces.length ? Math.min(...paces) : 0;
   const maxPace = paces.length ? Math.max(...paces) : 1;
   const paceRange = maxPace - minPace || 1;
-  const pointW = data.length > 1 ? CHART_WIDTH / (data.length - 1) : CHART_WIDTH;
-  const barWidth = Math.max(5, Math.min(28, CHART_WIDTH / data.length - 4));
+  const pointW = data.length > 1 ? chartWidth / (data.length - 1) : chartWidth;
+  const barWidth = Math.max(5, Math.min(28, chartWidth / data.length - 4));
   const selectedItem = selected == null ? null : data[selected];
 
   return (
@@ -295,7 +347,7 @@ function RunVolumePaceChart({
         </View>
       </View>
 
-      <View style={{ height: height + 26, width: CHART_WIDTH }}>
+      <View style={{ height: height + 26, width: chartWidth }}>
         <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">{maxKm.toFixed(0)} km</Text>
         <Text className="absolute left-0 bottom-6 text-surface-600 text-[10px]">0 km</Text>
         {paces.length > 0 && (
@@ -390,6 +442,7 @@ function StatRow({ label, value, valueColor }: { label: string; value: string; v
 
 export default function AnalisesScreen() {
   const [period, setPeriod] = useState<Period>("90d");
+  const [chartWidth, setChartWidth] = useState(SCREEN_FALLBACK);
   const from = periodToDate(period);
   const now = useMemo(() => new Date(), []);
 
@@ -504,6 +557,14 @@ export default function AnalisesScreen() {
         ))}
       </View>
 
+      <View
+        onLayout={(e) => {
+          const w = e.nativeEvent.layout.width;
+          if (w > 0) setChartWidth(w - 32);
+        }}
+        style={{ height: 0 }}
+      />
+
       {isLoading ? (
         <ActivityIndicator color="#10b981" size="large" className="mt-12" />
       ) : (
@@ -514,6 +575,7 @@ export default function AnalisesScreen() {
               <>
                 <MultiSparkLine
                   labels={weightLabels}
+                  chartWidth={chartWidth}
                   series={[
                     { label: "MM7", color: "#10b981", data: mm7 },
                     { label: "MM14", color: "#38bdf8", data: mm14 },
@@ -550,7 +612,7 @@ export default function AnalisesScreen() {
             <SectionLabel label="Gasto Calorico" />
             {tdeeData.length > 0 ? (
               <>
-                <SimpleBarChart data={tdeeData} color="#f97316" />
+                <SimpleBarChart data={tdeeData} color="#f97316" chartWidth={chartWidth} />
                 <StatRow
                   label="Media diaria"
                   value={`${Math.round(avgTdee).toLocaleString()} kcal`}
@@ -567,10 +629,9 @@ export default function AnalisesScreen() {
             <SectionLabel label="Corridas" />
             {runs.length > 0 ? (
               <>
-                <RunVolumePaceChart activities={runs} from={from} to={now} period={period} />
+                <RunVolumePaceChart activities={runs} from={from} to={now} period={period} chartWidth={chartWidth} />
                 <StatRow label="Km total" value={`${totalKm.toFixed(1)} km`} valueColor="text-sky-400" />
                 <StatRow label="Corridas" value={`${runs.length}`} />
-                <StatRow label="Dias corridos" value={`${runDays}`} />
                 <StatRow label="Pace medio" value={avgPace ? `${formatPace(avgPace)}/km` : "-"} />
                 <StatRow label="FC media" value={avgRunHr ? `${avgRunHr} bpm` : "-"} />
               </>

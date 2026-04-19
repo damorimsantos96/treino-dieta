@@ -11,7 +11,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   RefreshControl,
-  Dimensions,
 } from "react-native";
 import {
   addMonths,
@@ -42,8 +41,7 @@ import { IntervalType, RunActivity, RunSession } from "@/types";
 import { formatPace, formatDuration } from "@/utils/calculations";
 import { Ionicons } from "@expo/vector-icons";
 
-const { width } = Dimensions.get("window");
-const CHART_WIDTH = width - 64;
+const CHART_FALLBACK = 320;
 
 type PeriodKey = "7d" | "30d" | "90d" | "180d" | "360d";
 type BucketMode = "week" | "month" | "quarter" | "year";
@@ -258,24 +256,30 @@ function DayCard({
   const totalDuration = activities.reduce((sum, item) => sum + activityDuration(item), 0);
   const totalKcal = activities.reduce((sum, item) => sum + (item.calories_kcal ?? 0), 0);
   const avgHr = averageHr(activities);
+  const avgPace = totalKm > 0 && totalDuration > 0 ? totalDuration / totalKm : null;
+  const totalIntervals = activities.reduce((sum, item) => sum + (item.intervals?.length ?? 0), 0);
   const dateLabel = format(parseISO(date), "d 'de' MMM", { locale: ptBR });
 
   return (
     <View className="bg-surface-800 border border-surface-700/60 rounded-2xl px-4 py-3.5 mb-2.5">
-      <View className="flex-row justify-between items-center">
-        <View className="flex-row items-center gap-2">
-          <Text className="text-surface-400 text-sm font-medium">{dateLabel}</Text>
-          <View className="bg-surface-700/60 rounded-md px-1.5 py-0.5">
-            <Text className="text-surface-500 text-xs">
-              {activities.length} {activities.length === 1 ? "corrida" : "corridas"}
-            </Text>
-          </View>
+      <View className="flex-row items-center gap-2 flex-wrap">
+        <Text className="text-surface-400 text-sm font-medium">{dateLabel}</Text>
+        <View className="bg-surface-700/60 rounded-md px-1.5 py-0.5">
+          <Text className="text-surface-500 text-xs">
+            {activities.length} {activities.length === 1 ? "corrida" : "corridas"}
+          </Text>
         </View>
-        <Text className="text-white text-base font-bold">{totalKm.toFixed(2)} km</Text>
+        {totalIntervals > 0 && (
+          <View className="bg-surface-700/60 rounded-md px-1.5 py-0.5">
+            <Text className="text-surface-500 text-xs">{totalIntervals} int.</Text>
+          </View>
+        )}
+        <Text className="text-white text-base font-bold ml-auto">{totalKm.toFixed(2)} km</Text>
       </View>
 
       <View className="flex-row gap-4 mt-2 flex-wrap">
         {totalDuration > 0 && <Text className="text-surface-500 text-xs">{formatDuration(totalDuration)}</Text>}
+        {avgPace && <Text className="text-surface-500 text-xs">{formatPace(avgPace)}/km</Text>}
         {avgHr && <Text className="text-surface-500 text-xs">{avgHr} bpm</Text>}
         {totalKcal > 0 && <Text className="text-surface-500 text-xs">{Math.round(totalKcal)} kcal</Text>}
       </View>
@@ -364,11 +368,13 @@ function VolumePaceChart({
   from,
   to,
   mode,
+  chartWidth = CHART_FALLBACK,
 }: {
   activities: RunActivity[];
   from: Date;
   to: Date;
   mode: BucketMode;
+  chartWidth?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const data = useMemo(() => buildRunBuckets(activities, from, to, mode), [activities, from, to, mode]);
@@ -380,8 +386,8 @@ function VolumePaceChart({
   const minPace = paces.length ? Math.min(...paces) : 0;
   const maxPace = paces.length ? Math.max(...paces) : 1;
   const paceRange = maxPace - minPace || 1;
-  const pointW = data.length > 1 ? CHART_WIDTH / (data.length - 1) : CHART_WIDTH;
-  const barWidth = Math.max(8, Math.min(34, CHART_WIDTH / data.length - 4));
+  const pointW = data.length > 1 ? chartWidth / (data.length - 1) : chartWidth;
+  const barWidth = Math.max(8, Math.min(34, chartWidth / data.length - 4));
   const selectedItem = selected == null ? null : data[selected];
 
   return (
@@ -402,7 +408,7 @@ function VolumePaceChart({
         </View>
       </View>
 
-      <View style={{ width: CHART_WIDTH, height: height + 26 }}>
+      <View style={{ width: chartWidth, height: height + 26 }}>
         <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">
           {maxKm.toFixed(0)} km
         </Text>
@@ -495,6 +501,7 @@ function VolumePaceChart({
 export default function CorridasScreen() {
   const [period, setPeriod] = useState<PeriodKey>("90d");
   const [bucketMode, setBucketMode] = useState<BucketMode>("week");
+  const [chartWidth, setChartWidth] = useState(CHART_FALLBACK);
   const from = useMemo(() => periodFrom(period), [period]);
   const to = useMemo(() => new Date(), []);
   const qc = useQueryClient();
@@ -636,6 +643,14 @@ export default function CorridasScreen() {
           </TouchableOpacity>
         </View>
 
+        <View
+          style={{ height: 0 }}
+          onLayout={(e) => {
+            const w = e.nativeEvent.layout.width;
+            if (w > 0) setChartWidth(w - 32);
+          }}
+        />
+
         <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1 mb-3">
           {PERIODS.map(({ key, label }) => (
             <TouchableOpacity
@@ -670,7 +685,7 @@ export default function CorridasScreen() {
           <>
             {activities.length > 0 && <SummaryBar activities={activities} />}
             {activities.length > 0 && (
-              <VolumePaceChart activities={activities} from={from} to={to} mode={bucketMode} />
+              <VolumePaceChart activities={activities} from={from} to={to} mode={bucketMode} chartWidth={chartWidth} />
             )}
             {sortedDates.map((date) => (
               <DayCard key={date} date={date} activities={grouped[date]} onDelete={handleDelete} />
