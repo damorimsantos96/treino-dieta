@@ -13,6 +13,10 @@
     },
     "preview": {
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "SUPABASE_URL_REDACTED",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "SUPABASE_KEY_REDACTED"
+      },
       "android": {
         "buildType": "apk"
       }

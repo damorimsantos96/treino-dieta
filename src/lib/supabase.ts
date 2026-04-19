@@ -2,9 +2,12 @@ import { createClient } from "@supabase/supabase-js";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
-function normalizeSupabaseUrl(value: string | undefined): string {
+const FALLBACK_SUPABASE_URL = "https://placeholder.supabase.co";
+const FALLBACK_SUPABASE_ANON_KEY = "placeholder";
+
+function normalizeSupabaseUrl(value: string | undefined): string | null {
   const raw = value?.trim().replace(/\/+$/, "");
-  if (!raw) throw new Error("EXPO_PUBLIC_SUPABASE_URL não configurada.");
+  if (!raw) return null;
 
   const normalized = (() => {
     if (/^https?:\/\//.test(raw)) return raw;
@@ -13,38 +16,38 @@ function normalizeSupabaseUrl(value: string | undefined): string {
     return null;
   })();
 
-  if (!normalized) {
-    throw new Error(
-      "EXPO_PUBLIC_SUPABASE_URL inválida. Use https://<project-ref>.supabase.co"
-    );
+  if (!normalized) return null;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    return null;
   }
 
-  const parsed = new URL(normalized);
   const isLocalhost = ["localhost", "127.0.0.1"].includes(parsed.hostname);
-  if (parsed.protocol !== "https:" && !isLocalhost) {
-    throw new Error("EXPO_PUBLIC_SUPABASE_URL deve usar https em produção.");
-  }
-  if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
-    throw new Error("EXPO_PUBLIC_SUPABASE_URL deve conter apenas a origem.");
-  }
+  if (parsed.protocol !== "https:" && !isLocalhost) return null;
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash) return null;
 
   return parsed.origin;
 }
 
-function getRequiredEnv(value: string | undefined, name: string): string {
-  const raw = value?.trim();
-  if (!raw) throw new Error(`${name} não configurada.`);
-  return raw;
-}
-
-export const supabaseUrl = normalizeSupabaseUrl(
+const configuredSupabaseUrl = normalizeSupabaseUrl(
   process.env.EXPO_PUBLIC_SUPABASE_URL
 );
-export const supabaseHost = new URL(supabaseUrl).host;
-const supabaseAnonKey = getRequiredEnv(
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-  "EXPO_PUBLIC_SUPABASE_ANON_KEY"
+const configuredSupabaseAnonKey =
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim() || null;
+
+export const isSupabaseConfigured = Boolean(
+  configuredSupabaseUrl && configuredSupabaseAnonKey
 );
+export const supabaseConfigError = isSupabaseConfigured
+  ? null
+  : "Configuracao do Supabase ausente neste build.";
+
+export const supabaseUrl = configuredSupabaseUrl ?? FALLBACK_SUPABASE_URL;
+export const supabaseHost = new URL(supabaseUrl).host;
+const supabaseAnonKey = configuredSupabaseAnonKey ?? FALLBACK_SUPABASE_ANON_KEY;
 
 const ExpoSecureStoreAdapter = {
   getItem: (key: string) => {

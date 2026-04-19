@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { useAuthStore } from "@/stores/auth";
+import { isSupabaseConfigured, supabaseConfigError } from "@/lib/supabase";
 import { useBiometrics } from "@/hooks/useBiometrics";
 import {
   getLoginErrorDetails,
@@ -40,6 +41,14 @@ export default function LoginScreen() {
   }
 
   async function handleLogin() {
+    if (!isSupabaseConfigured) {
+      const message = supabaseConfigError ?? "Configuracao do Supabase ausente.";
+      setErrorMessage(message);
+      setErrorDetails("");
+      Alert.alert("Configuracao ausente", message);
+      return;
+    }
+
     if (!email || !password) {
       const message = "Preencha email e senha.";
       setErrorMessage(message);
@@ -181,7 +190,7 @@ export default function LoginScreen() {
           {/* Login button */}
           <TouchableOpacity
             style={{
-              backgroundColor: "#10b981",
+              backgroundColor: isSupabaseConfigured ? "#10b981" : "#2c2d36",
               borderRadius: 14,
               paddingVertical: 16,
               alignItems: "center",
@@ -191,7 +200,7 @@ export default function LoginScreen() {
               elevation: 6,
             }}
             onPress={handleLogin}
-            disabled={loading}
+            disabled={loading || !isSupabaseConfigured}
           >
             {loading ? (
               <ActivityIndicator color="white" />
@@ -201,6 +210,23 @@ export default function LoginScreen() {
               </Text>
             )}
           </TouchableOpacity>
+
+          {!isSupabaseConfigured ? (
+            <View
+              style={{
+                marginTop: 16,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: "#f59e0b55",
+                backgroundColor: "#f59e0b1a",
+                padding: 12,
+              }}
+            >
+              <Text style={{ color: "#fde68a", fontSize: 13, lineHeight: 18 }}>
+                {supabaseConfigError}
+              </Text>
+            </View>
+          ) : null}
 
           {errorMessage ? (
             <View

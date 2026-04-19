@@ -19,17 +19,35 @@ export default function RootLayout() {
   const setSession = useAuthStore((s) => s.setSession);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-    });
+    let isMounted = true;
+    let unsubscribe: (() => void) | undefined;
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setSession(session);
+    async function loadSession() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (isMounted) setSession(session);
+      } catch {
+        if (isMounted) setSession(null);
       }
-    );
+    }
 
-    return () => subscription.unsubscribe();
+    loadSession();
+
+    try {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        (_event, session) => {
+          if (isMounted) setSession(session);
+        }
+      );
+      unsubscribe = () => subscription.unsubscribe();
+    } catch {
+      setSession(null);
+    }
+
+    return () => {
+      isMounted = false;
+      unsubscribe?.();
+    };
   }, [setSession]);
 
   return (
