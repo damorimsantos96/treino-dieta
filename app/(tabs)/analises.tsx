@@ -89,6 +89,7 @@ function SimpleBarChart({
   chartWidth?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
+  const [hovered, setHovered] = useState<number | null>(null);
   if (data.length === 0) return null;
 
   const max = Math.max(...data.map((item) => item.value), 1);
@@ -96,7 +97,8 @@ function SimpleBarChart({
   const plotHeight = height - CHART_TOP;
   const slotWidth = plotWidth / data.length;
   const barWidth = Math.max(1, Math.min(24, slotWidth * 0.72));
-  const selectedItem = selected == null ? null : data[selected];
+  const activeIndex = hovered ?? selected;
+  const selectedItem = activeIndex == null ? null : data[activeIndex];
 
   return (
     <View className="gap-2">
@@ -117,9 +119,13 @@ function SimpleBarChart({
           {data.map((item, index) => (
             <TouchableOpacity
               key={`${item.label}-${index}`}
-              onPress={() => setSelected(index)}
+              onPress={() => setSelected((prev) => prev === index ? null : index)}
               className="items-center justify-end"
               style={{ width: slotWidth, height: plotHeight }}
+              {...({
+                onPointerEnter: () => setHovered(index),
+                onPointerLeave: () => setHovered(null),
+              } as any)}
             >
               <View
                 style={{
@@ -127,7 +133,7 @@ function SimpleBarChart({
                   height: Math.max(3, (item.value / max) * (plotHeight - 8)),
                   backgroundColor: color,
                   borderRadius: 4,
-                  opacity: selected === index ? 1 : 0.85,
+                  opacity: activeIndex === index ? 1 : 0.85,
                 }}
               />
             </TouchableOpacity>
@@ -158,7 +164,7 @@ function SimpleBarChart({
       {selectedItem && (
         <View className="bg-surface-700/50 border border-surface-600/40 rounded-xl px-3 py-2">
           <Text className="text-white text-xs font-semibold">
-            {selectedItem.label}: {Math.round(selectedItem.value).toLocaleString()}
+            {selectedItem.label}: {Math.round(selectedItem.value).toLocaleString()} kcal
           </Text>
         </View>
       )}
@@ -384,6 +390,7 @@ function RunVolumePaceChart({
   chartWidth?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
+  const [hovered, setHovered] = useState<number | null>(null);
   const mode = runBucketMode(period);
   const data = useMemo(() => buildRunBuckets(activities, from, to, mode), [activities, from, to, mode]);
   if (data.length === 0) return null;
@@ -399,7 +406,8 @@ function RunVolumePaceChart({
   const pointW = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth;
   const slotWidth = plotWidth / data.length;
   const barWidth = Math.max(2, Math.min(26, slotWidth * 0.72));
-  const selectedItem = selected == null ? null : data[selected];
+  const activeIndex = hovered ?? selected;
+  const selectedItem = activeIndex == null ? null : data[activeIndex];
 
   return (
     <View className="gap-3">
@@ -436,9 +444,13 @@ function RunVolumePaceChart({
           {data.map((item, index) => (
             <TouchableOpacity
               key={`${item.label}-${index}`}
-              onPress={() => setSelected(index)}
+              onPress={() => setSelected((prev) => prev === index ? null : index)}
               className="items-center justify-end"
               style={{ width: slotWidth, height: plotHeight }}
+              {...({
+                onPointerEnter: () => setHovered(index),
+                onPointerLeave: () => setHovered(null),
+              } as any)}
             >
               <View
                 style={{
@@ -446,7 +458,7 @@ function RunVolumePaceChart({
                   height: Math.max(2, (item.distance / maxKm) * (plotHeight - 8)),
                   backgroundColor: "#3b82f6",
                   borderRadius: 4,
-                  opacity: selected === index ? 1 : 0.82,
+                  opacity: activeIndex === index ? 1 : 0.82,
                 }}
               />
             </TouchableOpacity>
