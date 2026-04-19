@@ -4,12 +4,9 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Modal,
   TextInput,
   Alert,
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   RefreshControl,
 } from "react-native";
 import {
@@ -40,8 +37,13 @@ import {
 import { IntervalType, RunActivity, RunSession } from "@/types";
 import { formatPace, formatDuration } from "@/utils/calculations";
 import { Ionicons } from "@expo/vector-icons";
+import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 
 const CHART_FALLBACK = 320;
+const CHART_LEFT = 34;
+const CHART_RIGHT = 48;
+const CHART_BOTTOM = 24;
+const CHART_TOP = 8;
 
 type PeriodKey = "7d" | "30d" | "90d" | "180d" | "360d";
 type BucketMode = "week" | "month" | "quarter" | "year";
@@ -386,8 +388,11 @@ function VolumePaceChart({
   const minPace = paces.length ? Math.min(...paces) : 0;
   const maxPace = paces.length ? Math.max(...paces) : 1;
   const paceRange = maxPace - minPace || 1;
-  const pointW = data.length > 1 ? chartWidth / (data.length - 1) : chartWidth;
-  const barWidth = Math.max(8, Math.min(34, chartWidth / data.length - 4));
+  const plotWidth = Math.max(160, chartWidth - CHART_LEFT - CHART_RIGHT);
+  const plotHeight = height - CHART_TOP;
+  const pointW = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth;
+  const slotWidth = plotWidth / data.length;
+  const barWidth = Math.max(2, Math.min(30, slotWidth * 0.72));
   const selectedItem = selected == null ? null : data[selected];
 
   return (
@@ -408,7 +413,7 @@ function VolumePaceChart({
         </View>
       </View>
 
-      <View style={{ width: chartWidth, height: height + 26 }}>
+      <View style={{ width: chartWidth, height: height + CHART_BOTTOM }}>
         <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">
           {maxKm.toFixed(0)} km
         </Text>
@@ -424,18 +429,26 @@ function VolumePaceChart({
           </>
         )}
 
-        <View className="absolute left-0 right-0 bottom-6 flex-row items-end justify-between" style={{ height }}>
+        <View
+          className="absolute flex-row items-end justify-between overflow-hidden"
+          style={{
+            left: CHART_LEFT,
+            right: CHART_RIGHT,
+            top: CHART_TOP,
+            height: plotHeight,
+          }}
+        >
           {data.map((item, index) => (
             <TouchableOpacity
               key={`${item.label}-${index}`}
               onPress={() => setSelected(index)}
               className="items-center justify-end"
-              style={{ width: Math.max(barWidth, 10), height }}
+              style={{ width: slotWidth, height: plotHeight }}
             >
               <View
                 style={{
                   width: barWidth,
-                  height: Math.max(2, (item.distance / maxKm) * (height - 16)),
+                  height: Math.max(2, (item.distance / maxKm) * (plotHeight - 8)),
                   backgroundColor: "#3b82f6",
                   borderRadius: 4,
                   opacity: selected === index ? 1 : 0.82,
@@ -445,14 +458,23 @@ function VolumePaceChart({
           ))}
         </View>
 
-        <View pointerEvents="none" className="absolute left-0 right-0 bottom-6" style={{ height }}>
+        <View
+          pointerEvents="none"
+          className="absolute overflow-hidden"
+          style={{
+            left: CHART_LEFT,
+            right: CHART_RIGHT,
+            top: CHART_TOP,
+            height: plotHeight,
+          }}
+        >
           {data.map((item, index) => {
             if (index === 0 || item.pace == null || data[index - 1].pace == null) return null;
             const prev = data[index - 1].pace!;
             const x1 = (index - 1) * pointW;
             const x2 = index * pointW;
-            const y1 = ((prev - minPace) / paceRange) * (height - 16) + 8;
-            const y2 = ((item.pace - minPace) / paceRange) * (height - 16) + 8;
+            const y1 = ((prev - minPace) / paceRange) * (plotHeight - 10) + 5;
+            const y2 = ((item.pace - minPace) / paceRange) * (plotHeight - 10) + 5;
             const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
             const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
             return (
@@ -474,11 +496,22 @@ function VolumePaceChart({
           })}
         </View>
 
-        <View className="absolute left-0 right-0 bottom-0 flex-row justify-between">
+        <View
+          className="absolute bottom-0"
+          style={{ left: CHART_LEFT, width: plotWidth, height: 14 }}
+        >
           {data.map((item, index) => {
             const show = data.length <= 8 || index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 5) === 0;
             return (
-              <Text key={`${item.label}-axis`} className="text-surface-600 text-[10px]" style={{ width: barWidth + 8 }}>
+              <Text
+                key={`${item.label}-axis`}
+                className="text-surface-600 text-[10px]"
+                style={{
+                  position: "absolute",
+                  left: Math.min(plotWidth - 46, Math.max(0, index * slotWidth - 14)),
+                  width: 46,
+                }}
+              >
                 {show ? item.label : ""}
               </Text>
             );
@@ -624,59 +657,62 @@ export default function CorridasScreen() {
   return (
     <View className="flex-1 bg-surface-900">
       <ScrollView
-        contentContainerClassName="px-4 pt-14 pb-8"
+        stickyHeaderIndices={[0]}
+        contentContainerClassName="px-4 pt-6 pb-8"
         refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#10b981" />}
       >
-        <View className="flex-row justify-between items-center mb-4">
-          <View>
-            <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
-              Corridas
-            </Text>
-            <Text className="text-white text-3xl font-bold tracking-tight">Historico</Text>
+        <View className="bg-surface-900 pb-4">
+          <View className="flex-row justify-between items-center mb-4">
+            <View>
+              <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
+                Corridas
+              </Text>
+              <Text className="text-white text-3xl font-bold tracking-tight">Historico</Text>
+            </View>
+            <TouchableOpacity
+              className="bg-brand-500 rounded-xl px-4 py-2.5 border border-brand-600"
+              onPress={() => setShowModal(true)}
+              style={{ shadowColor: "#10b981", shadowOpacity: 0.25, shadowRadius: 8, elevation: 3 }}
+            >
+              <Text className="text-white font-bold text-sm">+ Corrida</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            className="bg-brand-500 rounded-xl px-4 py-2.5 border border-brand-600"
-            onPress={() => setShowModal(true)}
-            style={{ shadowColor: "#10b981", shadowOpacity: 0.25, shadowRadius: 8, elevation: 3 }}
-          >
-            <Text className="text-white font-bold text-sm">+ Corrida</Text>
-          </TouchableOpacity>
-        </View>
 
-        <View
-          style={{ height: 0 }}
-          onLayout={(e) => {
-            const w = e.nativeEvent.layout.width;
-            if (w > 0) setChartWidth(w - 32);
-          }}
-        />
+          <View
+            style={{ height: 0 }}
+            onLayout={(e) => {
+              const w = e.nativeEvent.layout.width;
+              if (w > 0) setChartWidth(w - 32);
+            }}
+          />
 
-        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1 mb-3">
-          {PERIODS.map(({ key, label }) => (
-            <TouchableOpacity
-              key={key}
-              className={`flex-1 py-2 rounded-xl items-center ${period === key ? "bg-brand-500" : ""}`}
-              onPress={() => setPeriod(key)}
-            >
-              <Text className={`text-sm font-bold ${period === key ? "text-white" : "text-surface-500"}`}>
-                {label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+          <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1 mb-3">
+            {PERIODS.map(({ key, label }) => (
+              <TouchableOpacity
+                key={key}
+                className={`flex-1 py-2 rounded-xl items-center ${period === key ? "bg-brand-500" : ""}`}
+                onPress={() => setPeriod(key)}
+              >
+                <Text className={`text-sm font-bold ${period === key ? "text-white" : "text-surface-500"}`}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
-        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1 mb-4">
-          {BUCKETS.map(({ key, label }) => (
-            <TouchableOpacity
-              key={key}
-              className={`flex-1 py-2 rounded-xl items-center ${bucketMode === key ? "bg-surface-700" : ""}`}
-              onPress={() => setBucketMode(key)}
-            >
-              <Text className={`text-xs font-bold ${bucketMode === key ? "text-white" : "text-surface-500"}`}>
-                {label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1">
+            {BUCKETS.map(({ key, label }) => (
+              <TouchableOpacity
+                key={key}
+                className={`flex-1 py-2 rounded-xl items-center ${bucketMode === key ? "bg-surface-700" : ""}`}
+                onPress={() => setBucketMode(key)}
+              >
+                <Text className={`text-xs font-bold ${bucketMode === key ? "text-white" : "text-surface-500"}`}>
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
         {isLoading ? (
@@ -701,11 +737,7 @@ export default function CorridasScreen() {
         )}
       </ScrollView>
 
-      <Modal visible={showModal} animationType="slide" transparent>
-        <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === "ios" ? "padding" : "height"}>
-          <View className="flex-1 justify-end">
-            <View className="bg-surface-800 border border-surface-700/60 rounded-t-3xl px-5 pt-6 pb-10 gap-4">
-              <View className="w-10 h-1 bg-surface-600 rounded-full self-center mb-2" />
+      <BottomSheetModal visible={showModal} onClose={() => setShowModal(false)} scroll>
               <Text className="text-white text-xl font-bold">Nova corrida</Text>
               <Text className="text-surface-500 text-xs -mt-2">
                 Kcal e temperatura ficam na sessao; intervalos guardam distancia, ritmo e FC.
@@ -817,10 +849,7 @@ export default function CorridasScreen() {
                   {saving ? <ActivityIndicator color="white" /> : <Text className="text-white font-bold">Salvar</Text>}
                 </TouchableOpacity>
               </View>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      </BottomSheetModal>
     </View>
   );
 }

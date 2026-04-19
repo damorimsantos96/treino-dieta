@@ -58,6 +58,7 @@ export default function TabsLayout() {
         name="registrar"
         options={{
           title: "Registrar",
+          href: null,
           tabBarIcon: ({ focused }) => <TabIcon name="add-circle" focused={focused} />,
           tabBarButton: () => null,
         }}

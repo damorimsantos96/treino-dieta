@@ -1,15 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
-  Modal,
   TextInput,
   Alert,
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
 } from "react-native";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
@@ -17,6 +14,7 @@ import { ptBR } from "date-fns/locale";
 import { getPRMovements, getPRAttempts, createPRMovement, createPRAttempt, recalculatePRs } from "@/lib/api";
 import { PRMovement, PRAttempt, PRUnit } from "@/types";
 import { Ionicons } from "@expo/vector-icons";
+import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 
 const UNIT_LABELS: Record<PRUnit, string> = {
   time_sec: "Tempo (seg)",
@@ -146,6 +144,79 @@ function MovementCard({
   );
 }
 
+function PRAttemptChart({
+  movement,
+  attempts,
+}: {
+  movement: PRMovement | null;
+  attempts: PRAttempt[];
+}) {
+  const [selected, setSelected] = useState<number | null>(null);
+  if (!movement) return null;
+
+  const ordered = [...attempts].sort((a, b) => a.date.localeCompare(b.date));
+  if (ordered.length === 0) {
+    return (
+      <Text className="text-surface-500 text-sm">
+        Nenhuma tentativa registrada para este PR.
+      </Text>
+    );
+  }
+
+  const values = ordered.map((item) => item.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const selectedAttempt = selected == null ? null : ordered[selected];
+
+  return (
+    <View className="gap-3">
+      <View className="h-36 flex-row items-end gap-2 overflow-hidden">
+        {ordered.map((attempt, index) => {
+          const normalized = movement.lower_is_better
+            ? (max - attempt.value) / range
+            : (attempt.value - min) / range;
+          return (
+            <TouchableOpacity
+              key={attempt.id}
+              activeOpacity={0.8}
+              onPress={() => setSelected((current) => current === index ? null : index)}
+              className="flex-1 justify-end"
+              style={{ minWidth: 10 }}
+            >
+              <View
+                style={{
+                  height: `${Math.max(8, 18 + normalized * 76)}%`,
+                  backgroundColor: attempt.is_pr ? "#10b981" : "#3b82f6",
+                  opacity: selected == null || selected === index ? 0.95 : 0.45,
+                  borderRadius: 5,
+                }}
+              />
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <View className="flex-row justify-between">
+        <Text className="text-surface-600 text-[10px]">
+          {format(parseISO(ordered[0].date), "dd/MM/yy", { locale: ptBR })}
+        </Text>
+        <Text className="text-surface-600 text-[10px]">
+          {format(parseISO(ordered[ordered.length - 1].date), "dd/MM/yy", { locale: ptBR })}
+        </Text>
+      </View>
+      {selectedAttempt && (
+        <View className="bg-surface-700/50 border border-surface-600/40 rounded-xl px-3 py-2">
+          <Text className="text-white text-xs font-semibold">
+            {format(parseISO(selectedAttempt.date), "dd/MM/yy", { locale: ptBR })}:{" "}
+            {formatValue(selectedAttempt.value, movement.unit)}
+            {selectedAttempt.is_pr ? " - PR" : ""}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function PRsScreen() {
   const qc = useQueryClient();
   const { data: movements = [], isLoading } = useQuery({
@@ -193,9 +264,19 @@ export default function PRsScreen() {
     reps: "",
     notes: "",
   });
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const [historyMovementId, setHistoryMovementId] = useState<string | null>(null);
 
   const prMap = new Map<string, PRAttempt>();
   attempts.filter((a) => a.is_pr).forEach((a) => prMap.set(a.movement_id, a));
+  const selectedHistoryMovement = useMemo(() => {
+    if (movements.length === 0) return null;
+    return movements.find((movement) => movement.id === historyMovementId) ?? movements[0];
+  }, [historyMovementId, movements]);
+  const selectedHistoryAttempts = useMemo(
+    () => attempts.filter((attempt) => attempt.movement_id === selectedHistoryMovement?.id),
+    [attempts, selectedHistoryMovement?.id]
+  );
 
   async function handleSeedDefaults() {
     Alert.alert(
@@ -270,8 +351,8 @@ export default function PRsScreen() {
 
   return (
     <View className="flex-1 bg-surface-900">
-      <ScrollView contentContainerClassName="px-4 pt-14 pb-8">
-        <View className="flex-row justify-between items-center mb-5">
+      <ScrollView stickyHeaderIndices={[0]} contentContainerClassName="px-4 pt-6 pb-8">
+        <View className="flex-row justify-between items-center mb-5 bg-surface-900 pb-3">
           <View>
             <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
               Seus recordes
@@ -310,6 +391,60 @@ export default function PRsScreen() {
           </View>
         </View>
 
+        {movements.length > 0 && (
+          <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 mb-4 gap-3">
+            <TouchableOpacity
+              className="flex-row items-center justify-between"
+              onPress={() => setHistoryOpen((current) => !current)}
+            >
+              <View>
+                <Text className="text-surface-500 text-xs font-bold uppercase tracking-widest">
+                  Historico de PR
+                </Text>
+                <Text className="text-white text-base font-bold mt-1">
+                  {selectedHistoryMovement?.name ?? "Selecione um movimento"}
+                </Text>
+              </View>
+              <Ionicons
+                name={historyOpen ? "chevron-up" : "chevron-down"}
+                size={18}
+                color="#72737f"
+              />
+            </TouchableOpacity>
+
+            {historyOpen && (
+              <>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View className="flex-row gap-2">
+                    {movements.map((movement) => {
+                      const active = selectedHistoryMovement?.id === movement.id;
+                      return (
+                        <TouchableOpacity
+                          key={movement.id}
+                          className={`px-3 py-2 rounded-lg border ${
+                            active
+                              ? "bg-brand-500/15 border-brand-500/30"
+                              : "bg-surface-700/50 border-surface-600/40"
+                          }`}
+                          onPress={() => setHistoryMovementId(movement.id)}
+                        >
+                          <Text className={`text-xs font-semibold ${active ? "text-brand-400" : "text-surface-500"}`}>
+                            {movement.name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+                <PRAttemptChart
+                  movement={selectedHistoryMovement}
+                  attempts={selectedHistoryAttempts}
+                />
+              </>
+            )}
+          </View>
+        )}
+
         {isLoading ? (
           <ActivityIndicator color="#10b981" size="large" className="mt-12" />
         ) : movements.length === 0 ? (
@@ -345,15 +480,12 @@ export default function PRsScreen() {
       </ScrollView>
 
       {/* Add attempt modal */}
-      <Modal visible={!!selectedMovement} animationType="slide" transparent>
-        <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === "ios" ? "padding" : "height"}>
-          <View className="flex-1 justify-end bg-black/40">
-            <ScrollView
-              className="bg-surface-800 border border-surface-700/60 rounded-t-3xl"
-              contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 24, paddingBottom: 40, gap: 16 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              <View className="w-10 h-1 bg-surface-600 rounded-full self-center mb-2" />
+      <BottomSheetModal
+        visible={!!selectedMovement}
+        onClose={() => setSelectedMovement(null)}
+        scroll
+        maxHeight="88%"
+      >
               <View className="flex-row items-center gap-2">
                 <Ionicons name="trophy" size={18} color="#f59e0b" />
                 <Text className="text-white text-xl font-bold">
@@ -462,17 +594,14 @@ export default function PRsScreen() {
                   )}
                 </TouchableOpacity>
               </View>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      </BottomSheetModal>
 
       {/* Add movement modal */}
-      <Modal visible={showAddMovement} animationType="slide" transparent>
-        <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === "ios" ? "padding" : "height"}>
-          <View className="flex-1 justify-end">
-            <View className="bg-surface-800 border border-surface-700/60 rounded-t-3xl px-5 pt-6 pb-10 gap-4">
-              <View className="w-10 h-1 bg-surface-600 rounded-full self-center mb-2" />
+      <BottomSheetModal
+        visible={showAddMovement}
+        onClose={() => setShowAddMovement(false)}
+        scroll
+      >
               <Text className="text-white text-xl font-bold">Novo movimento</Text>
               <TextInput
                 className={inputStyle}
@@ -531,7 +660,16 @@ export default function PRsScreen() {
                     <Text className="text-white text-xs font-bold">✓</Text>
                   )}
                 </View>
-                <Text className="text-white text-sm">Menor é melhor (tempo)</Text>
+                <View className="flex-1">
+                  <Text className="text-white text-sm">
+                    {newMovementForm.lower_is_better ? "Menor e melhor" : "Maior e melhor"}
+                  </Text>
+                  <Text className="text-surface-500 text-xs mt-0.5">
+                    {newMovementForm.unit === "time_sec"
+                      ? "Tempo normalmente usa menor melhor."
+                      : "Use conforme a regra do movimento."}
+                  </Text>
+                </View>
               </TouchableOpacity>
               <View className="flex-row gap-3 mt-1">
                 <TouchableOpacity
@@ -547,10 +685,7 @@ export default function PRsScreen() {
                   <Text className="text-white font-bold">Criar</Text>
                 </TouchableOpacity>
               </View>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      </BottomSheetModal>
     </View>
   );
 }

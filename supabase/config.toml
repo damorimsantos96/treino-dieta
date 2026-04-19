@@ -1,0 +1,5 @@
+[functions.sync-whoop]
+verify_jwt = false
+
+[functions.sync-garmin]
+verify_jwt = false

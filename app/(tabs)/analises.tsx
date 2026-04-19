@@ -5,8 +5,10 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  TextInput,
+  Alert,
 } from "react-native";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addDays,
   addMonths,
@@ -20,13 +22,18 @@ import {
   subDays,
   subMonths,
 } from "date-fns";
-import { getDailyLogs, getRunActivities } from "@/lib/api";
+import { getDailyLogs, getRunActivities, upsertDailyLog } from "@/lib/api";
 import { computeDailyCalculations, formatDuration, formatPace } from "@/utils/calculations";
 import { useUserMetrics } from "@/hooks/useUserProfile";
 import { Card, SectionLabel } from "@/components/ui/Card";
 import { RunActivity } from "@/types";
+import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 
 const SCREEN_FALLBACK = 320;
+const CHART_LEFT = 36;
+const CHART_RIGHT = 50;
+const CHART_BOTTOM = 24;
+const CHART_TOP = 8;
 
 type Period = "30d" | "90d" | "6m" | "1y";
 
@@ -79,28 +86,39 @@ function SimpleBarChart({
   if (data.length === 0) return null;
 
   const max = Math.max(...data.map((item) => item.value), 1);
-  const barWidth = Math.max(4, Math.min(28, (chartWidth - 32) / data.length - 3));
+  const plotWidth = Math.max(160, chartWidth - CHART_LEFT - CHART_RIGHT);
+  const plotHeight = height - CHART_TOP;
+  const slotWidth = plotWidth / data.length;
+  const barWidth = Math.max(1, Math.min(24, slotWidth * 0.72));
   const selectedItem = selected == null ? null : data[selected];
 
   return (
     <View className="gap-2">
-      <View style={{ height: height + 24, width: chartWidth }}>
+      <View style={{ height: height + CHART_BOTTOM, width: chartWidth }}>
         <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">
           {Math.round(max).toLocaleString()}
         </Text>
         <Text className="absolute left-0 bottom-6 text-surface-600 text-[10px]">0</Text>
-        <View className="absolute left-0 right-0 bottom-6 flex-row items-end justify-between" style={{ height }}>
+        <View
+          className="absolute flex-row items-end justify-between overflow-hidden"
+          style={{
+            left: CHART_LEFT,
+            right: CHART_RIGHT,
+            top: CHART_TOP,
+            height: plotHeight,
+          }}
+        >
           {data.map((item, index) => (
             <TouchableOpacity
               key={`${item.label}-${index}`}
               onPress={() => setSelected(index)}
               className="items-center justify-end"
-              style={{ width: Math.max(barWidth, 8), height }}
+              style={{ width: slotWidth, height: plotHeight }}
             >
               <View
                 style={{
                   width: barWidth,
-                  height: Math.max(3, (item.value / max) * (height - 16)),
+                  height: Math.max(3, (item.value / max) * (plotHeight - 8)),
                   backgroundColor: color,
                   borderRadius: 4,
                   opacity: selected === index ? 1 : 0.85,
@@ -109,11 +127,22 @@ function SimpleBarChart({
             </TouchableOpacity>
           ))}
         </View>
-        <View className="absolute left-0 right-0 bottom-0 flex-row justify-between">
+        <View
+          className="absolute bottom-0"
+          style={{ left: CHART_LEFT, width: plotWidth, height: 14 }}
+        >
           {data.map((item, index) => {
             const show = data.length <= 8 || index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 5) === 0;
             return (
-              <Text key={`${item.label}-axis`} className="text-surface-600 text-[10px]" style={{ width: barWidth + 8 }}>
+              <Text
+                key={`${item.label}-axis`}
+                className="text-surface-600 text-[10px]"
+                style={{
+                  position: "absolute",
+                  left: Math.min(plotWidth - 46, Math.max(0, index * slotWidth - 14)),
+                  width: 46,
+                }}
+              >
                 {show ? item.label : ""}
               </Text>
             );
@@ -143,6 +172,7 @@ function MultiSparkLine({
   chartWidth?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
+  if (series.length === 0) return null;
   const allValues = series.flatMap((item) => item.data).filter((value) => Number.isFinite(value));
   if (allValues.length < 2) return null;
 
@@ -150,25 +180,36 @@ function MultiSparkLine({
   const max = Math.max(...allValues);
   const range = max - min || 1;
   const maxLength = Math.max(...series.map((item) => item.data.length));
-  const pointW = maxLength > 1 ? chartWidth / (maxLength - 1) : chartWidth;
+  const plotWidth = Math.max(160, chartWidth - CHART_LEFT - CHART_RIGHT);
+  const plotHeight = height - CHART_TOP;
+  const pointW = maxLength > 1 ? plotWidth / (maxLength - 1) : plotWidth;
   const selectedValues = selected != null
     ? series.map((line) => line.data[selected]).filter(Number.isFinite)
     : [];
 
   return (
     <View className="gap-3">
-      <View style={{ height: height + 24, position: "relative", width: chartWidth }}>
+      <View style={{ height: height + CHART_BOTTOM, position: "relative", width: chartWidth }}>
         <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">{max.toFixed(1)} kg</Text>
         <Text className="absolute left-0 bottom-6 text-surface-600 text-[10px]">{min.toFixed(1)} kg</Text>
-        <View pointerEvents="none" className="absolute left-0 right-0 bottom-6" style={{ height }}>
+        <View
+          pointerEvents="none"
+          className="absolute overflow-hidden"
+          style={{
+            left: CHART_LEFT,
+            right: CHART_RIGHT,
+            top: CHART_TOP,
+            height: plotHeight,
+          }}
+        >
           {series.map((line) =>
             line.data.map((value, index) => {
               if (index === 0) return null;
               const previous = line.data[index - 1];
               const x1 = (index - 1) * pointW;
               const x2 = index * pointW;
-              const y1 = height - ((previous - min) / range) * height;
-              const y2 = height - ((value - min) / range) * height;
+              const y1 = plotHeight - ((previous - min) / range) * (plotHeight - 8) - 4;
+              const y2 = plotHeight - ((value - min) / range) * (plotHeight - 8) - 4;
               const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
               const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
               return (
@@ -193,7 +234,7 @@ function MultiSparkLine({
           {selected != null && series[0]?.data[selected] != null && (() => {
             const value = series[0].data[selected];
             const cx = selected * pointW;
-            const cy = height - ((value - min) / range) * height;
+            const cy = plotHeight - ((value - min) / range) * (plotHeight - 8) - 4;
             return (
               <View
                 style={{
@@ -211,8 +252,13 @@ function MultiSparkLine({
         </View>
         <TouchableOpacity
           activeOpacity={1}
-          className="absolute left-0 right-0 bottom-6"
-          style={{ height }}
+          className="absolute"
+          style={{
+            left: CHART_LEFT,
+            right: CHART_RIGHT,
+            top: CHART_TOP,
+            height: plotHeight,
+          }}
           onPress={(e) => {
             const x = e.nativeEvent.locationX;
             const index = Math.round(x / pointW);
@@ -220,7 +266,10 @@ function MultiSparkLine({
             setSelected((prev) => prev === clamped ? null : clamped);
           }}
         />
-        <View className="absolute left-0 right-0 bottom-0 flex-row justify-between">
+        <View
+          className="absolute bottom-0 flex-row justify-between"
+          style={{ left: CHART_LEFT, right: CHART_RIGHT }}
+        >
           {[0, Math.floor(labels.length / 2), labels.length - 1].map((index) => (
             <Text key={`${labels[index]}-${index}`} className="text-surface-600 text-[10px]">
               {labels[index]}
@@ -330,8 +379,11 @@ function RunVolumePaceChart({
   const minPace = paces.length ? Math.min(...paces) : 0;
   const maxPace = paces.length ? Math.max(...paces) : 1;
   const paceRange = maxPace - minPace || 1;
-  const pointW = data.length > 1 ? chartWidth / (data.length - 1) : chartWidth;
-  const barWidth = Math.max(5, Math.min(28, chartWidth / data.length - 4));
+  const plotWidth = Math.max(160, chartWidth - CHART_LEFT - CHART_RIGHT);
+  const plotHeight = height - CHART_TOP;
+  const pointW = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth;
+  const slotWidth = plotWidth / data.length;
+  const barWidth = Math.max(2, Math.min(26, slotWidth * 0.72));
   const selectedItem = selected == null ? null : data[selected];
 
   return (
@@ -347,7 +399,7 @@ function RunVolumePaceChart({
         </View>
       </View>
 
-      <View style={{ height: height + 26, width: chartWidth }}>
+      <View style={{ height: height + CHART_BOTTOM, width: chartWidth }}>
         <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">{maxKm.toFixed(0)} km</Text>
         <Text className="absolute left-0 bottom-6 text-surface-600 text-[10px]">0 km</Text>
         {paces.length > 0 && (
@@ -357,18 +409,26 @@ function RunVolumePaceChart({
           </>
         )}
 
-        <View className="absolute left-0 right-0 bottom-6 flex-row items-end justify-between" style={{ height }}>
+        <View
+          className="absolute flex-row items-end justify-between overflow-hidden"
+          style={{
+            left: CHART_LEFT,
+            right: CHART_RIGHT,
+            top: CHART_TOP,
+            height: plotHeight,
+          }}
+        >
           {data.map((item, index) => (
             <TouchableOpacity
               key={`${item.label}-${index}`}
               onPress={() => setSelected(index)}
               className="items-center justify-end"
-              style={{ width: Math.max(barWidth, 8), height }}
+              style={{ width: slotWidth, height: plotHeight }}
             >
               <View
                 style={{
                   width: barWidth,
-                  height: Math.max(2, (item.distance / maxKm) * (height - 16)),
+                  height: Math.max(2, (item.distance / maxKm) * (plotHeight - 8)),
                   backgroundColor: "#3b82f6",
                   borderRadius: 4,
                   opacity: selected === index ? 1 : 0.82,
@@ -378,14 +438,23 @@ function RunVolumePaceChart({
           ))}
         </View>
 
-        <View pointerEvents="none" className="absolute left-0 right-0 bottom-6" style={{ height }}>
+        <View
+          pointerEvents="none"
+          className="absolute overflow-hidden"
+          style={{
+            left: CHART_LEFT,
+            right: CHART_RIGHT,
+            top: CHART_TOP,
+            height: plotHeight,
+          }}
+        >
           {data.map((item, index) => {
             if (index === 0 || item.pace == null || data[index - 1].pace == null) return null;
             const previous = data[index - 1].pace!;
             const x1 = (index - 1) * pointW;
             const x2 = index * pointW;
-            const y1 = ((previous - minPace) / paceRange) * (height - 16) + 8;
-            const y2 = ((item.pace - minPace) / paceRange) * (height - 16) + 8;
+            const y1 = ((previous - minPace) / paceRange) * (plotHeight - 10) + 5;
+            const y2 = ((item.pace - minPace) / paceRange) * (plotHeight - 10) + 5;
             const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
             const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
             return (
@@ -407,11 +476,22 @@ function RunVolumePaceChart({
           })}
         </View>
 
-        <View className="absolute left-0 right-0 bottom-0 flex-row justify-between">
+        <View
+          className="absolute bottom-0"
+          style={{ left: CHART_LEFT, width: plotWidth, height: 14 }}
+        >
           {data.map((item, index) => {
             const show = data.length <= 8 || index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 5) === 0;
             return (
-              <Text key={`${item.label}-axis`} className="text-surface-600 text-[10px]" style={{ width: barWidth + 8 }}>
+              <Text
+                key={`${item.label}-axis`}
+                className="text-surface-600 text-[10px]"
+                style={{
+                  position: "absolute",
+                  left: Math.min(plotWidth - 46, Math.max(0, index * slotWidth - 14)),
+                  width: 46,
+                }}
+              >
                 {show ? item.label : ""}
               </Text>
             );
@@ -443,19 +523,15 @@ function StatRow({ label, value, valueColor }: { label: string; value: string; v
 export default function AnalisesScreen() {
   const [period, setPeriod] = useState<Period>("90d");
   const [chartWidth, setChartWidth] = useState(SCREEN_FALLBACK);
+  const [maVisible, setMaVisible] = useState({ mm7: true, mm14: true, mm30: true });
+  const [editingWeight, setEditingWeight] = useState<{ date: string; weight: string } | null>(null);
   const from = periodToDate(period);
   const now = useMemo(() => new Date(), []);
+  const qc = useQueryClient();
 
   const { data: logs = [], isLoading: loadingLogs } = useQuery({
     queryKey: ["daily_logs", period],
     queryFn: () => getDailyLogs(from, now),
-  });
-
-  const weightFrom = useMemo(() => subMonths(now, 60), [now]);
-  const { data: weightLogs = [], isLoading: loadingWeight } = useQuery({
-    queryKey: ["daily_logs_weight_5y"],
-    queryFn: () => getDailyLogs(weightFrom, now),
-    staleTime: 5 * 60 * 1000,
   });
 
   const { data: runs = [], isLoading: loadingRuns } = useQuery({
@@ -463,10 +539,18 @@ export default function AnalisesScreen() {
     queryFn: () => getRunActivities(from, now, 2000),
   });
 
-  const userMetrics = useUserMetrics();
-  const isLoading = loadingLogs || loadingRuns || loadingWeight;
+  const { mutateAsync: saveWeight, isPending: savingWeight } = useMutation({
+    mutationFn: (payload: { date: string; weight_kg: number }) => upsertDailyLog(payload),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["daily_logs"] });
+      qc.invalidateQueries({ queryKey: ["daily_log", data.date] });
+    },
+  });
 
-  const weightRows = weightLogs
+  const userMetrics = useUserMetrics();
+  const isLoading = loadingLogs || loadingRuns;
+
+  const weightRows = logs
     .filter((log) => log.weight_kg)
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((log) => ({ date: log.date, weight: log.weight_kg! }));
@@ -477,6 +561,11 @@ export default function AnalisesScreen() {
   const mm7 = movingAverage(weightData, 7);
   const mm14 = movingAverage(weightData, 14);
   const mm30 = movingAverage(weightData, 30);
+  const visibleWeightSeries = [
+    maVisible.mm7 ? { label: "MM7", color: "#10b981", data: mm7 } : null,
+    maVisible.mm14 ? { label: "MM14", color: "#38bdf8", data: mm14 } : null,
+    maVisible.mm30 ? { label: "MM30", color: "#a78bfa", data: mm30 } : null,
+  ].filter((item): item is { label: string; color: string; data: number[] } => item != null);
 
   const weightInPeriod = logs
     .filter((log) => log.weight_kg)
@@ -531,30 +620,58 @@ export default function AnalisesScreen() {
       .concat(Array.from(runDateSet))
   ).size;
 
+  function toggleMa(key: keyof typeof maVisible) {
+    setMaVisible((current) => {
+      const selectedCount = Object.values(current).filter(Boolean).length;
+      if (current[key] && selectedCount === 1) return current;
+      return { ...current, [key]: !current[key] };
+    });
+  }
+
+  async function handleSaveWeight() {
+    if (!editingWeight) return;
+    const value = Number(editingWeight.weight.trim().replace(",", "."));
+    if (!Number.isFinite(value) || value < 20 || value > 300) {
+      Alert.alert("Revise o peso", "Informe um peso entre 20 e 300 kg.");
+      return;
+    }
+
+    try {
+      await saveWeight({ date: editingWeight.date, weight_kg: value });
+      setEditingWeight(null);
+    } catch (err: unknown) {
+      Alert.alert("Erro", err instanceof Error ? err.message : "Nao foi possivel salvar o peso.");
+    }
+  }
+
   return (
+    <>
     <ScrollView
       className="flex-1 bg-surface-900"
-      contentContainerClassName="px-4 pt-14 pb-10 gap-5"
+      stickyHeaderIndices={[0]}
+      contentContainerClassName="px-4 pt-6 pb-10 gap-5"
     >
-      <View>
-        <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
-          Tendencias
-        </Text>
-        <Text className="text-white text-3xl font-bold tracking-tight">Analises</Text>
-      </View>
+      <View className="bg-surface-900 pb-4">
+        <View className="mb-4">
+          <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
+            Tendencias
+          </Text>
+          <Text className="text-white text-3xl font-bold tracking-tight">Analises</Text>
+        </View>
 
-      <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1">
-        {PERIODS.map(({ key, label }) => (
-          <TouchableOpacity
-            key={key}
-            className={`flex-1 py-2 rounded-xl items-center ${period === key ? "bg-brand-500" : ""}`}
-            onPress={() => setPeriod(key)}
-          >
-            <Text className={`text-sm font-bold ${period === key ? "text-white" : "text-surface-500"}`}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1">
+          {PERIODS.map(({ key, label }) => (
+            <TouchableOpacity
+              key={key}
+              className={`flex-1 py-2 rounded-xl items-center ${period === key ? "bg-brand-500" : ""}`}
+              onPress={() => setPeriod(key)}
+            >
+              <Text className={`text-sm font-bold ${period === key ? "text-white" : "text-surface-500"}`}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
 
       <View
@@ -576,12 +693,36 @@ export default function AnalisesScreen() {
                 <MultiSparkLine
                   labels={weightLabels}
                   chartWidth={chartWidth}
-                  series={[
-                    { label: "MM7", color: "#10b981", data: mm7 },
-                    { label: "MM14", color: "#38bdf8", data: mm14 },
-                    { label: "MM30", color: "#a78bfa", data: mm30 },
-                  ]}
+                  series={visibleWeightSeries}
                 />
+                <View className="flex-row flex-wrap gap-2">
+                  {[
+                    { key: "mm7" as const, label: "MM7", color: "#10b981" },
+                    { key: "mm14" as const, label: "MM14", color: "#38bdf8" },
+                    { key: "mm30" as const, label: "MM30", color: "#a78bfa" },
+                  ].map((item) => {
+                    const active = maVisible[item.key];
+                    return (
+                      <TouchableOpacity
+                        key={item.key}
+                        onPress={() => toggleMa(item.key)}
+                        className={`flex-row items-center gap-2 px-3 py-2 rounded-lg border ${
+                          active
+                            ? "bg-surface-700/70 border-surface-600"
+                            : "bg-surface-700/25 border-surface-700/60"
+                        }`}
+                      >
+                        <View
+                          className="w-3 h-3 rounded"
+                          style={{ backgroundColor: active ? item.color : "transparent", borderWidth: 1, borderColor: item.color }}
+                        />
+                        <Text className={`text-xs font-semibold ${active ? "text-white" : "text-surface-500"}`}>
+                          {item.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
                 <StatRow
                   label="Atual"
                   value={`${latestWeight?.toFixed(1) ?? "-"} kg`}
@@ -600,11 +741,30 @@ export default function AnalisesScreen() {
                   }
                   valueColor={weightDelta <= 0 ? "text-brand-400" : "text-amber-400"}
                 />
-                <StatRow label="Menor (historico)" value={`${Math.min(...weightData).toFixed(1)} kg`} />
-                <StatRow label="Maior (historico)" value={`${Math.max(...weightData).toFixed(1)} kg`} />
+                <StatRow label="Menor (periodo)" value={`${Math.min(...weightData).toFixed(1)} kg`} />
+                <StatRow label="Maior (periodo)" value={`${Math.max(...weightData).toFixed(1)} kg`} />
+                <View className="gap-2 pt-2">
+                  <Text className="text-surface-500 text-xs font-semibold uppercase tracking-wider">
+                    Tabela de pesos do periodo
+                  </Text>
+                  {[...weightRows].reverse().map((row) => (
+                    <TouchableOpacity
+                      key={row.date}
+                      className="flex-row justify-between items-center py-2.5 border-b border-surface-700/40"
+                      onPress={() => setEditingWeight({ date: row.date, weight: row.weight.toFixed(1) })}
+                    >
+                      <Text className="text-surface-400 text-sm">
+                        {format(parseISO(row.date), "dd/MM/yy")}
+                      </Text>
+                      <Text className="text-white text-sm font-bold">
+                        {row.weight.toFixed(1)} kg
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </>
             ) : (
-              <Text className="text-surface-500 text-sm">Nenhum peso registrado no historico.</Text>
+              <Text className="text-surface-500 text-sm">Nenhum peso registrado neste periodo.</Text>
             )}
           </Card>
 
@@ -691,5 +851,48 @@ export default function AnalisesScreen() {
         </>
       )}
     </ScrollView>
+    <BottomSheetModal
+      visible={!!editingWeight}
+      onClose={() => setEditingWeight(null)}
+    >
+      <Text className="text-white text-xl font-bold">Editar peso</Text>
+      <Text className="text-surface-500 text-xs -mt-2">
+        {editingWeight ? format(parseISO(editingWeight.date), "dd/MM/yyyy") : ""}
+      </Text>
+      <View className="gap-1.5">
+        <Text className="text-surface-500 text-xs font-semibold">Peso (kg)</Text>
+        <TextInput
+          className="bg-surface-700 border border-surface-600/40 text-white rounded-xl px-4 py-3"
+          value={editingWeight?.weight ?? ""}
+          onChangeText={(value) =>
+            setEditingWeight((current) => current ? { ...current, weight: value } : current)
+          }
+          keyboardType="decimal-pad"
+          placeholder="82.7"
+          placeholderTextColor="#4a4b58"
+          selectTextOnFocus
+        />
+      </View>
+      <View className="flex-row gap-3">
+        <TouchableOpacity
+          className="flex-1 bg-surface-700 border border-surface-600/40 rounded-xl py-3.5 items-center"
+          onPress={() => setEditingWeight(null)}
+        >
+          <Text className="text-white font-semibold">Cancelar</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          className="flex-1 bg-brand-500 rounded-xl py-3.5 items-center"
+          onPress={handleSaveWeight}
+          disabled={savingWeight}
+        >
+          {savingWeight ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text className="text-white font-bold">Salvar</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </BottomSheetModal>
+    </>
   );
 }

@@ -13,8 +13,9 @@ const GARMIN_CONNECT_API = "https://connect.garmin.com/activitylist-service/acti
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type, apikey",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
 };
 
 function json(body: unknown, status = 200) {

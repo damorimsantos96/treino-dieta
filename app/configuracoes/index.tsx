@@ -6,16 +6,16 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
-  Modal,
   TextInput,
 } from "react-native";
 import { router } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/stores/auth";
 import { useBiometrics } from "@/hooks/useBiometrics";
-import { supabase, supabaseUrl } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { getProfile, upsertProfile } from "@/lib/api";
 import { SyncCandidate } from "@/types";
+import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 
 type SyncState = "idle" | "loading" | "success" | "error";
 
@@ -86,6 +86,7 @@ export default function ConfiguracoesScreen() {
   const [syncProvider, setSyncProvider] = useState<"whoop" | "garmin" | null>(null);
   const [candidates, setCandidates] = useState<SyncCandidate[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [profileSaved, setProfileSaved] = useState(false);
   const [profileForm, setProfileForm] = useState({
     name: "",
     birth_date: "1996-07-01",
@@ -116,19 +117,11 @@ export default function ConfiguracoesScreen() {
     mode: "list" | "import",
     ids: string[] = []
   ) {
-    const session = await supabase.auth.getSession();
-    const token = session.data.session?.access_token;
-    const res = await fetch(`${supabaseUrl}/functions/v1/sync-${provider}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ mode, ids }),
+    const { data, error } = await supabase.functions.invoke(`sync-${provider}`, {
+      body: { mode, ids },
     });
-    const data = await res.json();
-    if (!res.ok || data.fallback) {
-      throw new Error(data.error ?? "Sincronizacao falhou.");
+    if (error || data?.fallback) {
+      throw new Error(data?.error ?? error?.message ?? "Sincronizacao falhou.");
     }
     return data;
   }
@@ -200,7 +193,8 @@ export default function ConfiguracoesScreen() {
         birth_date: profileForm.birth_date,
         height_cm: Math.round(height),
       });
-      Alert.alert("Perfil", "Perfil salvo.");
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 3000);
     } catch (err: any) {
       Alert.alert("Erro", err.message);
     }
@@ -213,8 +207,12 @@ export default function ConfiguracoesScreen() {
         text: "Sair",
         style: "destructive",
         onPress: async () => {
-          await signOut();
-          router.replace("/(auth)/login");
+          try {
+            await signOut();
+          } finally {
+            qc.clear();
+            router.replace("/(auth)/login");
+          }
         },
       },
     ]);
@@ -296,6 +294,11 @@ export default function ConfiguracoesScreen() {
             <Text className="text-white font-bold text-sm">Salvar perfil</Text>
           )}
         </TouchableOpacity>
+        {profileSaved && (
+          <Text className="text-brand-400 text-xs font-semibold text-center">
+            Perfil salvo com sucesso.
+          </Text>
+        )}
       </View>
 
       <SectionTitle title="Integrações" />
@@ -360,10 +363,12 @@ export default function ConfiguracoesScreen() {
       </View>
     </ScrollView>
 
-    <Modal visible={!!syncProvider} animationType="slide" transparent>
-      <View className="flex-1 justify-end bg-black/40">
-        <View className="bg-surface-800 border border-surface-700/60 rounded-t-3xl px-5 pt-6 pb-10 gap-4 max-h-[80%]">
-          <View className="w-10 h-1 bg-surface-600 rounded-full self-center mb-2" />
+    <BottomSheetModal
+      visible={!!syncProvider}
+      onClose={() => setSyncProvider(null)}
+      scroll
+      maxHeight="82%"
+    >
           <View className="flex-row justify-between items-center">
             <Text className="text-white text-xl font-bold">
               {syncProvider === "whoop" ? "Atividades Whoop" : "Corridas Garmin"}
@@ -447,9 +452,7 @@ export default function ConfiguracoesScreen() {
               <Text className="text-white font-bold">Importar selecionados</Text>
             )}
           </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
+    </BottomSheetModal>
     </>
   );
 }

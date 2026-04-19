@@ -85,19 +85,24 @@ function NumInput({
   decimal?: boolean;
 }) {
   return (
-    <View className="flex-1 gap-1.5">
+    <View className="flex-1 gap-1.5" style={{ minWidth: 0 }}>
       <Text className="text-surface-500 text-xs font-semibold">{label}</Text>
-      <View className="flex-row items-center bg-surface-700/50 border border-surface-700 rounded-xl px-3 py-2.5">
+      <View
+        className="flex-row items-center bg-surface-700/50 border border-surface-700 rounded-xl px-3 py-2.5"
+        style={{ minWidth: 0 }}
+      >
         <TextInput
           className="flex-1 text-white text-sm"
+          style={{ minWidth: 0, padding: 0 }}
           value={value}
           onChangeText={onChange}
           keyboardType={decimal ? "decimal-pad" : "number-pad"}
           placeholder={placeholder}
           placeholderTextColor="#4a4b58"
+          selectTextOnFocus
         />
         {unit && (
-          <Text className="text-surface-500 text-xs font-medium ml-1">{unit}</Text>
+          <Text className="text-surface-500 text-xs font-medium ml-1 shrink-0">{unit}</Text>
         )}
       </View>
     </View>
