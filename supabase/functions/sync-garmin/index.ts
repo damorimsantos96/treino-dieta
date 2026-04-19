@@ -9,7 +9,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const GARMIN_SSO_URL = "https://sso.garmin.com/sso";
-const GARMIN_CONNECT_API = "https://connect.garmin.com/activitylist-service/activities/search/activities";
+const GARMIN_ACTIVITY_URLS = [
+  "https://connect.garmin.com/modern/proxy/activitylist-service/activities/search/activities",
+  "https://connect.garmin.com/activitylist-service/activities/search/activities",
+];
 const GARMIN_WEB_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36",
   "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -580,31 +583,53 @@ async function redeemGarminTicket(ticket: string, cookies: string): Promise<stri
 }
 
 async function fetchGarminActivities(cookies: string, limit: number) {
-  const url = `${GARMIN_CONNECT_API}?limit=${limit}&start=0`;
-  const res = await fetch(url, {
-    headers: {
-      ...GARMIN_WEB_HEADERS,
-      Accept: "application/json, text/plain, */*",
-      Cookie: cookies,
-      "NK": "NT",
-      "X-app-ver": "4.40.0.0",
-    },
+  const failures: Record<string, unknown>[] = [];
+
+  for (const baseUrl of GARMIN_ACTIVITY_URLS) {
+    const url = `${baseUrl}?start=0&limit=${limit}`;
+    const res = await fetch(url, {
+      headers: {
+        ...GARMIN_WEB_HEADERS,
+        Accept: "application/json, text/plain, */*",
+        Cookie: cookies,
+        Referer: "https://connect.garmin.com/modern/activities",
+        "DI-Backend": "connectapi.garmin.com",
+        "NK": "NT",
+        "X-app-ver": "4.40.0.0",
+      },
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      failures.push({
+        url: baseUrl,
+        status: res.status,
+        body: text.slice(0, 300),
+      });
+      continue;
+    }
+
+    try {
+      const data = JSON.parse(text);
+      if (Array.isArray(data)) return data;
+      failures.push({
+        url: baseUrl,
+        status: res.status,
+        body: text.slice(0, 300),
+        reason: "not_array",
+      });
+    } catch {
+      failures.push({
+        url: baseUrl,
+        status: res.status,
+        body: text.slice(0, 300),
+        reason: "invalid_json",
+      });
+    }
+  }
+
+  throw new SyncError(424, "GARMIN_ACTIVITIES_FAILED", "Garmin recusou a busca de atividades.", {
+    attempts: failures,
   });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new SyncError(424, "GARMIN_ACTIVITIES_FAILED", "Garmin recusou a busca de atividades.", {
-      status: res.status,
-      body: text.slice(0, 500),
-    });
-  }
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new SyncError(424, "GARMIN_ACTIVITIES_INVALID_RESPONSE", "Garmin retornou atividades em formato inesperado.", {
-      status: res.status,
-      body: text.slice(0, 500),
-    });
-  }
 }
 
 async function fetchGarminLaps(cookies: string, activityIdValue: string) {

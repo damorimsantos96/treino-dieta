@@ -166,7 +166,7 @@ export default function ConfiguracoesScreen() {
       const data = await callSyncFunction(provider, "list");
       const list = (data.candidates ?? []) as SyncCandidate[];
       setCandidates(list);
-      setSelectedIds(new Set(list.filter((item) => !item.already_imported).map((item) => item.id)));
+      setSelectedIds(new Set());
       setSyncProvider(provider);
       setState("success");
     } catch (err: any) {
@@ -201,7 +201,9 @@ export default function ConfiguracoesScreen() {
 
   async function importSelected() {
     if (!syncProvider) return;
-    const ids = Array.from(selectedIds);
+    const ids = Array.from(selectedIds).filter((id) =>
+      candidates.some((candidate) => candidate.id === id && !candidate.already_imported)
+    );
     if (ids.length === 0) {
       Alert.alert("Nada selecionado", "Escolha pelo menos um item novo para importar.");
       return;
@@ -271,6 +273,21 @@ export default function ConfiguracoesScreen() {
         },
       },
     ]);
+  }
+
+  const importableCandidates = candidates.filter((candidate) => !candidate.already_imported);
+  const selectedImportableCount = importableCandidates.filter((candidate) =>
+    selectedIds.has(candidate.id)
+  ).length;
+  const allImportableSelected =
+    importableCandidates.length > 0 && selectedImportableCount === importableCandidates.length;
+
+  function toggleAllCandidates() {
+    setSelectedIds(
+      allImportableSelected
+        ? new Set()
+        : new Set(importableCandidates.map((candidate) => candidate.id))
+    );
   }
 
   return (
@@ -450,6 +467,24 @@ export default function ConfiguracoesScreen() {
           <Text className="text-surface-500 text-xs leading-5">
             Selecione somente o que deseja importar. Itens ja importados ficam marcados.
           </Text>
+          {candidates.length > 0 && (
+            <View className="flex-row items-center justify-between gap-3">
+              <Text className="text-surface-500 text-xs flex-1">
+                {selectedImportableCount}/{importableCandidates.length} novos selecionados
+              </Text>
+              <TouchableOpacity
+                onPress={toggleAllCandidates}
+                disabled={importableCandidates.length === 0}
+                className={`rounded-xl px-3 py-2 ${
+                  importableCandidates.length === 0 ? "bg-surface-700/40" : "bg-surface-700"
+                }`}
+              >
+                <Text className="text-white text-xs font-bold">
+                  {allImportableSelected ? "Desmarcar tudo" : "Marcar tudo"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           <ScrollView className="max-h-[360px]">
             {candidates.length === 0 ? (
