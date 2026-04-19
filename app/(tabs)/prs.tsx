@@ -169,24 +169,26 @@ function PRAttemptChart({
   const range = max - min || 1;
   const selectedAttempt = selected == null ? null : ordered[selected];
 
+  const CHART_H = 144;
+
   return (
     <View className="gap-3">
-      <View className="h-36 flex-row items-end gap-2 overflow-hidden">
+      <View style={{ height: CHART_H, flexDirection: "row", alignItems: "flex-end", gap: 4 }}>
         {ordered.map((attempt, index) => {
           const normalized = movement.lower_is_better
             ? (max - attempt.value) / range
             : (attempt.value - min) / range;
+          const barH = Math.max(8, Math.round((0.18 + normalized * 0.76) * CHART_H));
           return (
             <TouchableOpacity
               key={attempt.id}
               activeOpacity={0.8}
               onPress={() => setSelected((current) => current === index ? null : index)}
-              className="flex-1 justify-end"
-              style={{ minWidth: 10 }}
+              style={{ flex: 1, minWidth: 10, height: CHART_H, justifyContent: "flex-end" }}
             >
               <View
                 style={{
-                  height: `${Math.max(8, 18 + normalized * 76)}%`,
+                  height: barH,
                   backgroundColor: attempt.is_pr ? "#10b981" : "#3b82f6",
                   opacity: selected == null || selected === index ? 0.95 : 0.45,
                   borderRadius: 5,
@@ -264,7 +266,7 @@ export default function PRsScreen() {
     reps: "",
     notes: "",
   });
-  const [historyOpen, setHistoryOpen] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [historyMovementId, setHistoryMovementId] = useState<string | null>(null);
 
   const prMap = new Map<string, PRAttempt>();
