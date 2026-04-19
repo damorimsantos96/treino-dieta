@@ -7,6 +7,7 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
+  Linking,
 } from "react-native";
 import { router } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -176,6 +177,28 @@ export default function ConfiguracoesScreen() {
     }
   }
 
+  async function connectWhoop() {
+    setWhoopSync("loading");
+    try {
+      const { data, error } = await supabase.functions.invoke("whoop-oauth", {
+        body: { mode: "start" },
+      });
+      if (error) throw new Error(await extractFunctionError(error));
+      if (data?.error) throw new Error(formatFunctionErrorPayload(data));
+      if (!data?.authUrl) throw new Error("Whoop nao retornou URL de autorizacao.");
+
+      await Linking.openURL(data.authUrl);
+      Alert.alert(
+        "Conectar Whoop",
+        "Autorize o acesso no Whoop. Depois volte para o app e toque em Verificar."
+      );
+    } catch (err: any) {
+      Alert.alert("Erro Whoop", err.message);
+    } finally {
+      setWhoopSync("idle");
+    }
+  }
+
   async function importSelected() {
     if (!syncProvider) return;
     const ids = Array.from(selectedIds);
@@ -335,21 +358,36 @@ export default function ConfiguracoesScreen() {
 
       <SectionTitle title="Integrações" />
 
-      <SettingsRow
-        icon="⌚"
-        label="Whoop"
-        sub="Lista atividades recentes para importar kcal, tempo e FC media"
-        action={() => previewSync("whoop")}
-        actionLabel={
-          whoopSync === "success" ? "✓ Feito" :
-          whoopSync === "error" ? "Falhou" : "Verificar"
-        }
-        actionColor={
-          whoopSync === "success" ? "text-brand-400" :
-          whoopSync === "error" ? "text-red-400" : "text-brand-400"
-        }
-        loading={whoopSync === "loading"}
-      />
+      <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2">
+        <View className="flex-row items-center gap-3">
+          <Text className="text-xl">⌚</Text>
+          <View className="flex-1">
+            <Text className="text-white font-medium">Whoop</Text>
+            <Text className="text-surface-600 text-xs mt-0.5">
+              Conecta via OAuth e lista atividades recentes para importar kcal, tempo e FC media
+            </Text>
+          </View>
+          {whoopSync === "loading" && <ActivityIndicator size="small" color="#22c55e" />}
+        </View>
+        <View className="flex-row gap-2 mt-3">
+          <TouchableOpacity
+            className="flex-1 bg-surface-700 rounded-xl py-3 items-center"
+            onPress={connectWhoop}
+            disabled={whoopSync === "loading"}
+          >
+            <Text className="text-white font-bold text-sm">Conectar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className="flex-1 bg-brand-500 rounded-xl py-3 items-center"
+            onPress={() => previewSync("whoop")}
+            disabled={whoopSync === "loading"}
+          >
+            <Text className="text-white font-bold text-sm">
+              {whoopSync === "success" ? "Feito" : whoopSync === "error" ? "Falhou" : "Verificar"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       <SettingsRow
         icon="🏃"

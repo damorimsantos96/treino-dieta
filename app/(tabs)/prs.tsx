@@ -156,6 +156,7 @@ function PRAttemptChart({
   const [hovered, setHovered] = useState<number | null>(null);
 
   if (!movement) return null;
+  const chartMovement = movement;
 
   const ordered = [...attempts].sort((a, b) => a.date.localeCompare(b.date));
 
@@ -201,11 +202,11 @@ function PRAttemptChart({
   const activeIndex = hovered ?? selected;
   const activeAttempt = activeIndex != null ? ordered[activeIndex] : null;
 
-  const bestLabel = formatValue(movement.lower_is_better ? minV : maxV, movement.unit);
-  const worstLabel = formatValue(movement.lower_is_better ? maxV : minV, movement.unit);
+  const bestLabel = formatValue(chartMovement.lower_is_better ? minV : maxV, chartMovement.unit);
+  const worstLabel = formatValue(chartMovement.lower_is_better ? maxV : minV, chartMovement.unit);
 
   function computeCy(value: number): number {
-    const frac = movement.lower_is_better
+    const frac = chartMovement.lower_is_better
       ? (maxV - value) / range
       : (value - minV) / range;
     return plotHeight - frac * (plotHeight - 8) - 4;

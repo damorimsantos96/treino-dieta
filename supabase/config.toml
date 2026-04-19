@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.sync-garmin]
 verify_jwt = false
+
+[functions.whoop-oauth]
+verify_jwt = false

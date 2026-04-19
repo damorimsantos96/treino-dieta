@@ -9,7 +9,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token";
-const WHOOP_API = "https://api.prod.whoop.com/developer/v1";
+const WHOOP_API = "https://api.prod.whoop.com/developer/v2";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -228,16 +228,30 @@ async function fetchWorkouts(accessToken: string) {
   const start = new Date();
   start.setDate(start.getDate() - 45);
   const end = new Date();
-  const data = await whoopGet(
-    accessToken,
-    `/workout?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`
-  );
-  if (!Array.isArray(data?.records)) {
-    throw new SyncError(424, "WHOOP_INVALID_RESPONSE", "Whoop retornou uma resposta inesperada.", {
-      hasRecords: Boolean(data?.records),
+
+  const workouts: any[] = [];
+  let nextToken: string | null = null;
+  for (let page = 0; page < 10; page++) {
+    const params = new URLSearchParams({
+      start: start.toISOString(),
+      end: end.toISOString(),
+      limit: "25",
     });
+    if (nextToken) params.set("nextToken", nextToken);
+
+    const data = await whoopGet(accessToken, `/activity/workout?${params.toString()}`);
+    if (!Array.isArray(data?.records)) {
+      throw new SyncError(424, "WHOOP_INVALID_RESPONSE", "Whoop retornou uma resposta inesperada.", {
+        hasRecords: Boolean(data?.records),
+      });
+    }
+
+    workouts.push(...data.records);
+    nextToken = data.next_token ?? data.nextToken ?? null;
+    if (!nextToken) break;
   }
-  return data.records;
+
+  return workouts;
 }
 
 async function toCandidates(supabaseAdmin: any, userId: string, workouts: any[]) {
@@ -371,22 +385,29 @@ function mapSport(workout: any) {
   const sportId = Number(workout.sport_id ?? workout.sportId ?? 0);
   const name = String(workout.sport_name ?? workout.sportName ?? "").toLowerCase();
 
-  if (sportId === 63 || name.includes("cross")) {
+  if (sportId === 48 || sportId === 96 || name.includes("cross") || name.includes("functional")) {
     return { kcalField: "kcal_crossfit", minField: "min_crossfit", bpmField: "bpm_crossfit" };
   }
-  if (sportId === 1 || name.includes("weight") || name.includes("strength") || name.includes("muscul")) {
+  if (
+    sportId === 45 ||
+    sportId === 59 ||
+    sportId === 123 ||
+    name.includes("weight") ||
+    name.includes("strength") ||
+    name.includes("muscul")
+  ) {
     return { kcalField: "kcal_musculacao", minField: "min_musculacao", bpmField: "bpm_musculacao" };
   }
-  if (sportId === 71 || name.includes("box")) {
+  if (sportId === 39 || sportId === 103 || sportId === 127 || name.includes("box") || name.includes("kickboxing")) {
     return { kcalField: "kcal_boxe", minField: "min_boxe", bpmField: "bpm_boxe" };
   }
-  if (sportId === 78 || name.includes("surf")) {
+  if (sportId === 64 || name.includes("surf")) {
     return { kcalField: "kcal_surf", minField: "min_surf", bpmField: "bpm_surf" };
   }
-  if (sportId === 17 || name.includes("cycl") || name.includes("bike") || name.includes("cicl")) {
+  if (sportId === 1 || sportId === 57 || sportId === 97 || name.includes("cycl") || name.includes("bike") || name.includes("cicl")) {
     return { kcalField: "kcal_ciclismo", minField: "min_ciclismo", bpmField: "bpm_ciclismo" };
   }
-  if (name.includes("run") || name.includes("corr")) {
+  if (sportId === 0 || name.includes("run") || name.includes("corr")) {
     return { kcalField: "kcal_corrida", minField: "min_corrida", bpmField: "bpm_corrida" };
   }
   return { kcalField: "kcal_outros", minField: null, bpmField: null };

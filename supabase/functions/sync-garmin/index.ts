@@ -368,6 +368,24 @@ async function garminLogin(email: string, password: string): Promise<string> {
     throw new SyncError(409, "GARMIN_CREDENTIALS_MISSING", "Credenciais Garmin nao configuradas.");
   }
 
+  const failures: Record<string, unknown>[] = [];
+  for (const strategy of [garminSigninLogin, garminTicketLogin]) {
+    try {
+      return await strategy(email, password);
+    } catch (error) {
+      failures.push(errorDetailsForLog(error));
+    }
+  }
+
+  throw new SyncError(
+    409,
+    "GARMIN_AUTH_FAILED",
+    "Garmin recusou o login. Verifique credenciais, MFA ou bloqueio de seguranca.",
+    { strategies: failures }
+  );
+}
+
+async function garminSigninLogin(email: string, password: string): Promise<string> {
   const loginPageRes = await fetch(
     `${GARMIN_SSO_URL}/signin?service=https://connect.garmin.com/modern/`,
     {
@@ -424,12 +442,17 @@ async function garminLogin(email: string, password: string): Promise<string> {
 
   let allCookies = mergeCookieHeaders(cookies, cookieHeaderFromResponses(loginRes));
   const loginLocation = loginRes.headers.get("location") ?? "";
-  const loginBodySnippet = loginRes.status === 200 ? await responseSnippet(loginRes) : null;
+  const loginBody = loginRes.status === 200 ? await loginRes.text() : "";
+  const ticket = extractGarminTicket(loginLocation) ?? extractGarminTicket(loginBody);
+  if (ticket) {
+    return redeemGarminTicket(ticket, allCookies);
+  }
+
   if (loginRes.status >= 400 || (loginRes.status === 200 && !loginLocation)) {
-    throw new SyncError(409, "GARMIN_AUTH_FAILED", "Garmin recusou o login. Verifique credenciais, MFA ou bloqueio de seguranca.", {
+    throw new SyncError(409, "GARMIN_SIGNIN_FAILED", "Garmin recusou o login via signin.", {
       status: loginRes.status,
       hasLocation: Boolean(loginLocation),
-      hints: garminLoginHints(loginBodySnippet),
+      hints: garminLoginHints(loginBody),
     });
   }
 
@@ -444,6 +467,101 @@ async function garminLogin(email: string, password: string): Promise<string> {
     });
     allCookies = mergeCookieHeaders(allCookies, cookieHeaderFromResponses(redirectRes));
   }
+
+  const connectRes = await fetch("https://connect.garmin.com/modern/", {
+    headers: {
+      ...GARMIN_WEB_HEADERS,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      Cookie: allCookies,
+    },
+    redirect: "manual",
+  });
+  allCookies = mergeCookieHeaders(allCookies, cookieHeaderFromResponses(connectRes));
+  if (!allCookies) {
+    throw new SyncError(424, "GARMIN_SESSION_EMPTY", "Garmin nao retornou cookies de sessao.");
+  }
+
+  return allCookies;
+}
+
+async function garminTicketLogin(email: string, password: string): Promise<string> {
+  const service = "https://connect.garmin.com/post-auth/login";
+  const loginUrl = new URL(`${GARMIN_SSO_URL}/login`);
+  loginUrl.searchParams.set("service", service);
+  loginUrl.searchParams.set("clientId", "GarminConnect");
+  loginUrl.searchParams.set("consumeServiceTicket", "false");
+
+  const loginPageRes = await fetch(loginUrl.toString(), {
+    headers: {
+      ...GARMIN_WEB_HEADERS,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+    redirect: "follow",
+  });
+  if (!loginPageRes.ok) {
+    throw new SyncError(424, "GARMIN_TICKET_LOGIN_PAGE_FAILED", "Garmin nao abriu a tela alternativa de login.", {
+      status: loginPageRes.status,
+    });
+  }
+
+  const loginPageText = await loginPageRes.text();
+  const lt =
+    loginPageText.match(/name="lt"\s+value="([^"]+)"/)?.[1] ??
+    loginPageText.match(/flowExecutionKey:\s*\[?([A-Za-z0-9_-]+)/)?.[1] ??
+    "";
+  if (!lt) {
+    throw new SyncError(424, "GARMIN_TICKET_FLOW_NOT_FOUND", "Garmin nao retornou chave do fluxo de login.", {
+      hints: garminLoginHints(loginPageText),
+    });
+  }
+
+  const cookies = cookieHeaderFromResponses(loginPageRes);
+  const loginRes = await fetch(loginUrl.toString(), {
+    method: "POST",
+    headers: {
+      ...GARMIN_WEB_HEADERS,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      Cookie: cookies,
+      Origin: "https://sso.garmin.com",
+      Referer: loginUrl.toString(),
+    },
+    body: new URLSearchParams({
+      username: email,
+      password,
+      embed: "true",
+      lt,
+      _eventId: "submit",
+    }),
+    redirect: "manual",
+  });
+
+  const allCookies = mergeCookieHeaders(cookies, cookieHeaderFromResponses(loginRes));
+  const location = loginRes.headers.get("location") ?? "";
+  const body = await loginRes.text();
+  const ticket = extractGarminTicket(location) ?? extractGarminTicket(body);
+  if (!ticket) {
+    throw new SyncError(409, "GARMIN_TICKET_AUTH_FAILED", "Garmin recusou o login alternativo.", {
+      status: loginRes.status,
+      hasLocation: Boolean(location),
+      hints: garminLoginHints(body),
+    });
+  }
+
+  return redeemGarminTicket(ticket, allCookies);
+}
+
+async function redeemGarminTicket(ticket: string, cookies: string): Promise<string> {
+  let allCookies = cookies;
+  const redeemRes = await fetch(`https://connect.garmin.com/post-auth/login?ticket=${encodeURIComponent(ticket)}`, {
+    headers: {
+      ...GARMIN_WEB_HEADERS,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      Cookie: allCookies,
+    },
+    redirect: "manual",
+  });
+  allCookies = mergeCookieHeaders(allCookies, cookieHeaderFromResponses(redeemRes));
 
   const connectRes = await fetch("https://connect.garmin.com/modern/", {
     headers: {
@@ -570,11 +688,41 @@ function splitSetCookieHeader(header: string): string[] {
   return header.split(/,(?=\s*[^;,=\s]+=)/).map((part) => part.trim()).filter(Boolean);
 }
 
+function extractGarminTicket(value: string): string | null {
+  if (!value) return null;
+  const normalized = value.replaceAll("&amp;", "&");
+  const match =
+    normalized.match(/[?&]ticket=([^'"&\s]+)/) ??
+    normalized.match(/ticket%3D([^'"&\s]+)/i);
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
 function garminLoginHints(text: string | null): Record<string, boolean> {
   const lower = String(text ?? "").toLowerCase();
   return {
     mentionsMfa: lower.includes("mfa") || lower.includes("two-factor") || lower.includes("two factor"),
     mentionsCaptcha: lower.includes("captcha"),
     mentionsInvalidCredentials: lower.includes("invalid") || lower.includes("incorrect"),
+  };
+}
+
+function errorDetailsForLog(error: unknown): Record<string, unknown> {
+  if (error instanceof SyncError) {
+    return {
+      code: error.code,
+      status: error.status,
+      message: error.message,
+      details: error.details,
+    };
+  }
+  return {
+    code: "INTERNAL_ERROR",
+    status: 500,
+    message: error instanceof Error ? error.message : String(error),
   };
 }
