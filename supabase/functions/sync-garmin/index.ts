@@ -9,13 +9,30 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const GARMIN_SSO_URL = "https://sso.garmin.com/sso";
-const GARMIN_ACTIVITY_URLS = [
-  "https://connect.garmin.com/modern/proxy/activitylist-service/activities/search/activities",
-  "https://connect.garmin.com/activitylist-service/activities/search/activities",
+const GARMIN_CONNECT_API_URL = "https://connectapi.garmin.com";
+const GARMIN_MOBILE_USER_AGENT = "GCM-iOS-5.7.2.1";
+const GARMIN_ACTIVITY_URLS: Array<{ url: string; auth: GarminEndpointAuth }> = [
+  {
+    url: `${GARMIN_CONNECT_API_URL}/activitylist-service/activities/search/activities`,
+    auth: "bearer",
+  },
+  {
+    url: "https://connect.garmin.com/activitylist-service/activities/search/activities",
+    auth: "cookies",
+  },
 ];
 const GARMIN_WEB_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36",
   "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+};
+
+type GarminEndpointAuth = "bearer" | "cookies";
+type GarminOAuthConsumer = { key: string; secret: string };
+type GarminSession = {
+  cookies: string;
+  bearerToken: string | null;
+  authMode: "oauth" | "cookies";
+  oauthFailure?: Record<string, unknown>;
 };
 
 const CORS = {
@@ -222,12 +239,12 @@ async function toCandidates(supabaseAdmin: any, userId: string, activities: any[
   }));
 }
 
-async function importActivity(supabaseAdmin: any, userId: string, cookies: string, activity: any) {
+async function importActivity(supabaseAdmin: any, userId: string, session: GarminSession, activity: any) {
   const id = activityId(activity);
   const date = activityDate(activity);
   if (!id || !date) return null;
 
-  const laps = await fetchGarminLaps(cookies, id);
+  const laps = await fetchGarminLaps(session, id);
   const intervals = normalizeLaps(laps.length ? laps : [activity], date, id);
   const totalKm = intervals.reduce((sum, interval) => sum + (interval.distance_km ?? 0), 0);
   const totalMin = intervals.reduce((sum, interval) => sum + (interval.duration_min ?? 0), 0);
@@ -366,19 +383,24 @@ function durationSeconds(value: unknown): number {
   return n;
 }
 
-async function garminLogin(email: string, password: string): Promise<string> {
+async function garminLogin(email: string, password: string): Promise<GarminSession> {
   if (!email || !password) {
     throw new SyncError(409, "GARMIN_CREDENTIALS_MISSING", "Credenciais Garmin nao configuradas.");
   }
 
   const failures: Record<string, unknown>[] = [];
+  let cookieFallback: GarminSession | null = null;
   for (const strategy of [garminSigninLogin, garminTicketLogin]) {
     try {
-      return await strategy(email, password);
+      const session = await strategy(email, password);
+      if (session.bearerToken) return session;
+      cookieFallback ??= session;
     } catch (error) {
       failures.push(errorDetailsForLog(error));
     }
   }
+
+  if (cookieFallback) return cookieFallback;
 
   throw new SyncError(
     409,
@@ -388,7 +410,7 @@ async function garminLogin(email: string, password: string): Promise<string> {
   );
 }
 
-async function garminSigninLogin(email: string, password: string): Promise<string> {
+async function garminSigninLogin(email: string, password: string): Promise<GarminSession> {
   const loginPageRes = await fetch(
     `${GARMIN_SSO_URL}/signin?service=https://connect.garmin.com/modern/`,
     {
@@ -484,10 +506,10 @@ async function garminSigninLogin(email: string, password: string): Promise<strin
     throw new SyncError(424, "GARMIN_SESSION_EMPTY", "Garmin nao retornou cookies de sessao.");
   }
 
-  return allCookies;
+  return { cookies: allCookies, bearerToken: null, authMode: "cookies" };
 }
 
-async function garminTicketLogin(email: string, password: string): Promise<string> {
+async function garminTicketLogin(email: string, password: string): Promise<GarminSession> {
   const service = "https://connect.garmin.com/post-auth/login";
   const loginUrl = new URL(`${GARMIN_SSO_URL}/login`);
   loginUrl.searchParams.set("service", service);
@@ -554,7 +576,16 @@ async function garminTicketLogin(email: string, password: string): Promise<strin
   return redeemGarminTicket(ticket, allCookies);
 }
 
-async function redeemGarminTicket(ticket: string, cookies: string): Promise<string> {
+async function redeemGarminTicket(ticket: string, cookies: string): Promise<GarminSession> {
+  let bearerToken: string | null = null;
+  let oauthFailure: Record<string, unknown> | undefined;
+  try {
+    bearerToken = await fetchGarminBearerToken(ticket);
+  } catch (error) {
+    oauthFailure = errorDetailsForLog(error);
+    console.warn("Garmin OAuth token exchange failed", JSON.stringify(oauthFailure));
+  }
+
   let allCookies = cookies;
   const redeemRes = await fetch(`https://connect.garmin.com/post-auth/login?ticket=${encodeURIComponent(ticket)}`, {
     headers: {
@@ -575,33 +606,240 @@ async function redeemGarminTicket(ticket: string, cookies: string): Promise<stri
     redirect: "manual",
   });
   allCookies = mergeCookieHeaders(allCookies, cookieHeaderFromResponses(connectRes));
-  if (!allCookies) {
+  if (!allCookies && !bearerToken) {
     throw new SyncError(424, "GARMIN_SESSION_EMPTY", "Garmin nao retornou cookies de sessao.");
   }
 
-  return allCookies;
+  return {
+    cookies: allCookies,
+    bearerToken,
+    authMode: bearerToken ? "oauth" : "cookies",
+    oauthFailure,
+  };
 }
 
-async function fetchGarminActivities(cookies: string, limit: number) {
+async function fetchGarminBearerToken(ticket: string): Promise<string> {
+  const consumer = await getGarminOAuthConsumer();
+  const preauthorizedUrl = `${GARMIN_CONNECT_API_URL}/oauth-service/oauth/preauthorized`;
+  const preauthorizedParams = {
+    ticket,
+    "login-url": "https://sso.garmin.com/sso/embed",
+    "accepts-mfa-tokens": "true",
+  };
+  const preauthorizedSearch = new URLSearchParams(preauthorizedParams);
+  const preauthorizedRes = await fetch(`${preauthorizedUrl}?${preauthorizedSearch.toString()}`, {
+    headers: {
+      Accept: "application/x-www-form-urlencoded, application/json, */*",
+      Authorization: await buildOAuthHeader("GET", preauthorizedUrl, preauthorizedParams, consumer),
+      "User-Agent": GARMIN_MOBILE_USER_AGENT,
+    },
+  });
+  const preauthorizedText = await preauthorizedRes.text();
+  if (!preauthorizedRes.ok) {
+    throw new SyncError(424, "GARMIN_OAUTH_PREAUTHORIZED_FAILED", "Garmin recusou a troca do ticket por token OAuth.", {
+      status: preauthorizedRes.status,
+      body: preauthorizedText.slice(0, 300),
+    });
+  }
+
+  const oauth1Params = new URLSearchParams(preauthorizedText);
+  const oauthToken = oauth1Params.get("oauth_token");
+  const oauthTokenSecret = oauth1Params.get("oauth_token_secret");
+  if (!oauthToken || !oauthTokenSecret) {
+    throw new SyncError(424, "GARMIN_OAUTH_TOKEN_MISSING", "Garmin nao retornou token OAuth intermediario.", {
+      body: preauthorizedText.slice(0, 300),
+    });
+  }
+
+  const exchangeUrl = `${GARMIN_CONNECT_API_URL}/oauth-service/oauth/exchange/user/2.0`;
+  const exchangeRes = await fetch(exchangeUrl, {
+    method: "POST",
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      Authorization: await buildOAuthHeader("POST", exchangeUrl, {}, consumer, {
+        token: oauthToken,
+        tokenSecret: oauthTokenSecret,
+      }),
+      "User-Agent": GARMIN_MOBILE_USER_AGENT,
+    },
+  });
+  const exchangeText = await exchangeRes.text();
+  if (!exchangeRes.ok) {
+    throw new SyncError(424, "GARMIN_OAUTH_EXCHANGE_FAILED", "Garmin recusou a troca para bearer token.", {
+      status: exchangeRes.status,
+      body: exchangeText.slice(0, 300),
+    });
+  }
+
+  let exchangeData: any;
+  try {
+    exchangeData = JSON.parse(exchangeText);
+  } catch {
+    throw new SyncError(424, "GARMIN_OAUTH_EXCHANGE_INVALID_JSON", "Garmin retornou token em formato inesperado.", {
+      body: exchangeText.slice(0, 300),
+    });
+  }
+
+  const accessToken = exchangeData.access_token ?? exchangeData.token ?? exchangeData.oauth_token;
+  if (!accessToken) {
+    throw new SyncError(424, "GARMIN_OAUTH_ACCESS_TOKEN_MISSING", "Garmin nao retornou bearer token.", {
+      keys: Object.keys(exchangeData ?? {}),
+    });
+  }
+
+  return String(accessToken);
+}
+
+async function getGarminOAuthConsumer(): Promise<GarminOAuthConsumer> {
+  const key = Deno.env.get("GARMIN_OAUTH_CONSUMER_KEY")?.trim();
+  const secret = Deno.env.get("GARMIN_OAUTH_CONSUMER_SECRET")?.trim();
+  if (key && secret) return { key, secret };
+
+  const res = await fetch("https://thegarth.s3.amazonaws.com/oauth_consumer.json", {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    throw new SyncError(424, "GARMIN_OAUTH_CONSUMER_FAILED", "Nao foi possivel carregar a chave publica OAuth do Garmin.", {
+      status: res.status,
+      body: await responseSnippet(res),
+    });
+  }
+
+  const data = await res.json();
+  const remoteKey = data.consumer_key ?? data.consumerKey ?? data.key;
+  const remoteSecret = data.consumer_secret ?? data.consumerSecret ?? data.secret;
+  if (!remoteKey || !remoteSecret) {
+    throw new SyncError(424, "GARMIN_OAUTH_CONSUMER_INVALID", "Chave publica OAuth do Garmin veio em formato inesperado.", {
+      keys: Object.keys(data ?? {}),
+    });
+  }
+
+  return { key: String(remoteKey), secret: String(remoteSecret) };
+}
+
+function garminApiHeaders(
+  session: GarminSession,
+  auth: GarminEndpointAuth,
+  referer?: string
+): Record<string, string> | null {
+  const baseHeaders = {
+    ...GARMIN_WEB_HEADERS,
+    Accept: "application/json, text/plain, */*",
+    "NK": "NT",
+    "X-app-ver": "4.40.0.0",
+  };
+
+  if (auth === "bearer") {
+    if (!session.bearerToken) return null;
+    return {
+      ...baseHeaders,
+      "User-Agent": GARMIN_MOBILE_USER_AGENT,
+      Authorization: `Bearer ${session.bearerToken}`,
+    };
+  }
+
+  if (!session.cookies) return null;
+  return {
+    ...baseHeaders,
+    Cookie: session.cookies,
+    Referer: referer ?? "https://connect.garmin.com/modern/",
+    "DI-Backend": "connectapi.garmin.com",
+  };
+}
+
+async function buildOAuthHeader(
+  method: string,
+  url: string,
+  requestParams: Record<string, string>,
+  consumer: GarminOAuthConsumer,
+  token?: { token: string; tokenSecret: string }
+): Promise<string> {
+  const oauthParams: Record<string, string> = {
+    oauth_consumer_key: consumer.key,
+    oauth_nonce: crypto.randomUUID().replaceAll("-", ""),
+    oauth_signature_method: "HMAC-SHA1",
+    oauth_timestamp: Math.floor(Date.now() / 1000).toString(),
+    oauth_version: "1.0",
+  };
+  if (token?.token) oauthParams.oauth_token = token.token;
+
+  const signatureParams = { ...requestParams, ...oauthParams };
+  const signatureBase = [
+    method.toUpperCase(),
+    oauthPercent(normalizedUrl(url)),
+    oauthPercent(normalizeOAuthParams(signatureParams)),
+  ].join("&");
+  const signingKey = `${oauthPercent(consumer.secret)}&${oauthPercent(token?.tokenSecret ?? "")}`;
+  oauthParams.oauth_signature = await hmacSha1Base64(signingKey, signatureBase);
+
+  return `OAuth ${Object.entries(oauthParams)
+    .sort(([a], [b]) => compareAscii(a, b))
+    .map(([key, value]) => `${oauthPercent(key)}="${oauthPercent(value)}"`)
+    .join(", ")}`;
+}
+
+function normalizedUrl(value: string): string {
+  const url = new URL(value);
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function normalizeOAuthParams(params: Record<string, string>): string {
+  return Object.entries(params)
+    .map(([key, value]) => [oauthPercent(key), oauthPercent(value)] as const)
+    .sort(([keyA, valueA], [keyB, valueB]) => compareAscii(keyA, keyB) || compareAscii(valueA, valueB))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+}
+
+function compareAscii(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+function oauthPercent(value: string): string {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (char) =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+}
+
+async function hmacSha1Base64(key: string, message: string): Promise<string> {
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(key),
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(message));
+  return btoa(String.fromCharCode(...new Uint8Array(signature)));
+}
+
+async function fetchGarminActivities(session: GarminSession, limit: number) {
   const failures: Record<string, unknown>[] = [];
 
-  for (const baseUrl of GARMIN_ACTIVITY_URLS) {
-    const url = `${baseUrl}?start=0&limit=${limit}`;
+  for (const endpoint of GARMIN_ACTIVITY_URLS) {
+    const headers = garminApiHeaders(session, endpoint.auth, "https://connect.garmin.com/modern/activities");
+    if (!headers) {
+      failures.push({
+        url: endpoint.url,
+        auth: endpoint.auth,
+        reason: "missing_bearer_token",
+        oauthFailure: session.oauthFailure,
+      });
+      continue;
+    }
+
+    const url = `${endpoint.url}?start=0&limit=${limit}`;
     const res = await fetch(url, {
-      headers: {
-        ...GARMIN_WEB_HEADERS,
-        Accept: "application/json, text/plain, */*",
-        Cookie: cookies,
-        Referer: "https://connect.garmin.com/modern/activities",
-        "DI-Backend": "connectapi.garmin.com",
-        "NK": "NT",
-        "X-app-ver": "4.40.0.0",
-      },
+      headers,
     });
     const text = await res.text();
     if (!res.ok) {
       failures.push({
-        url: baseUrl,
+        url: endpoint.url,
+        auth: endpoint.auth,
         status: res.status,
         body: text.slice(0, 300),
       });
@@ -612,14 +850,16 @@ async function fetchGarminActivities(cookies: string, limit: number) {
       const data = JSON.parse(text);
       if (Array.isArray(data)) return data;
       failures.push({
-        url: baseUrl,
+        url: endpoint.url,
+        auth: endpoint.auth,
         status: res.status,
         body: text.slice(0, 300),
         reason: "not_array",
       });
     } catch {
       failures.push({
-        url: baseUrl,
+        url: endpoint.url,
+        auth: endpoint.auth,
         status: res.status,
         body: text.slice(0, 300),
         reason: "invalid_json",
@@ -632,24 +872,36 @@ async function fetchGarminActivities(cookies: string, limit: number) {
   });
 }
 
-async function fetchGarminLaps(cookies: string, activityIdValue: string) {
+async function fetchGarminLaps(session: GarminSession, activityIdValue: string) {
   const urls = [
-    `https://connect.garmin.com/modern/proxy/activity-service/activity/${activityIdValue}/laps`,
-    `https://connect.garmin.com/activity-service/activity/${activityIdValue}/laps`,
-    `https://connect.garmin.com/modern/proxy/activity-service/activity/${activityIdValue}/splits`,
+    {
+      url: `${GARMIN_CONNECT_API_URL}/activity-service/activity/${activityIdValue}/laps`,
+      auth: "bearer" as GarminEndpointAuth,
+    },
+    {
+      url: `${GARMIN_CONNECT_API_URL}/activity-service/activity/${activityIdValue}/splits`,
+      auth: "bearer" as GarminEndpointAuth,
+    },
+    {
+      url: `https://connect.garmin.com/activity-service/activity/${activityIdValue}/laps`,
+      auth: "cookies" as GarminEndpointAuth,
+    },
+    {
+      url: `https://connect.garmin.com/modern/proxy/activity-service/activity/${activityIdValue}/laps`,
+      auth: "cookies" as GarminEndpointAuth,
+    },
+    {
+      url: `https://connect.garmin.com/modern/proxy/activity-service/activity/${activityIdValue}/splits`,
+      auth: "cookies" as GarminEndpointAuth,
+    },
   ];
   let authFailureStatus: number | null = null;
 
-  for (const url of urls) {
-    const res = await fetch(url, {
-      headers: {
-        ...GARMIN_WEB_HEADERS,
-        Accept: "application/json, text/plain, */*",
-        Cookie: cookies,
-        "NK": "NT",
-        "X-app-ver": "4.40.0.0",
-      },
-    });
+  for (const endpoint of urls) {
+    const headers = garminApiHeaders(session, endpoint.auth, "https://connect.garmin.com/modern/activities");
+    if (!headers) continue;
+
+    const res = await fetch(endpoint.url, { headers });
     if (!res.ok) {
       if (res.status === 401 || res.status === 403) authFailureStatus = res.status;
       continue;

@@ -83,6 +83,21 @@ export default function TabsLayout() {
           tabBarIcon: ({ focused }) => <TabIcon name="bar-chart" focused={focused} />,
         }}
       />
+      <Tabs.Screen
+        name="configuracoes-shortcut"
+        listeners={{
+          tabPress: (event) => {
+            event.preventDefault();
+            router.push("/configuracoes");
+          },
+        }}
+        options={{
+          title: "",
+          tabBarAccessibilityLabel: "Configuracoes",
+          tabBarLabel: () => null,
+          tabBarIcon: ({ focused }) => <TabIcon name="settings" focused={focused} />,
+        }}
+      />
     </Tabs>
   );
 }

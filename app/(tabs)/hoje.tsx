@@ -104,12 +104,6 @@ export default function HojeScreen() {
               </Text>
             </View>
           )}
-          <TouchableOpacity
-            onPress={() => router.push("/configuracoes")}
-            className="bg-surface-800 border border-surface-700/60 rounded-xl w-10 h-10 items-center justify-center"
-          >
-            <Ionicons name="settings-outline" size={18} color="#72737f" />
-          </TouchableOpacity>
         </View>
       </View>
 
