@@ -25,33 +25,117 @@ function json(body: unknown, status = 200) {
   });
 }
 
+class SyncError extends Error {
+  status: number;
+  code: string;
+  details: Record<string, unknown>;
+
+  constructor(status: number, code: string, message: string, details: Record<string, unknown> = {}) {
+    super(message);
+    this.name = "SyncError";
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function fail(error: unknown, context: { provider: string; requestId: string; stage: string }) {
+  const syncError = error instanceof SyncError
+    ? error
+    : new SyncError(500, "INTERNAL_ERROR", error instanceof Error ? error.message : "Erro desconhecido");
+
+  console.error(`${context.provider} sync failed`, JSON.stringify({
+    requestId: context.requestId,
+    stage: context.stage,
+    code: syncError.code,
+    status: syncError.status,
+    message: syncError.message,
+    details: syncError.details,
+  }));
+
+  return json({
+    error: syncError.message,
+    code: syncError.code,
+    stage: context.stage,
+    requestId: context.requestId,
+  }, syncError.status);
+}
+
+function requireEnv(name: string): string {
+  const value = Deno.env.get(name)?.trim();
+  if (!value) {
+    throw new SyncError(500, "MISSING_SECRET", `Secret ${name} ausente no Supabase.`, { name });
+  }
+  return value;
+}
+
+function dbError(stage: string, error: unknown): SyncError {
+  return new SyncError(500, "DATABASE_ERROR", "Erro ao acessar dados da integracao.", {
+    stage,
+    message: error instanceof Error ? error.message : String(error),
+  });
+}
+
+async function responseSnippet(res: Response): Promise<string | null> {
+  try {
+    const text = await res.text();
+    return text.slice(0, 500);
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
+  const requestId = crypto.randomUUID();
+  let stage = "start";
+
   try {
+    stage = "auth";
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) return json({ error: "Unauthorized" }, 401);
+    if (!authHeader) {
+      return json({
+        error: "Unauthorized",
+        code: "UNAUTHORIZED",
+        stage,
+        requestId,
+      }, 401);
+    }
 
     const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
+      requireEnv("SUPABASE_URL"),
+      requireEnv("SUPABASE_ANON_KEY"),
       { global: { headers: { Authorization: authHeader } } }
     );
 
     const supabaseAdmin = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      requireEnv("SUPABASE_URL"),
+      requireEnv("SUPABASE_SERVICE_ROLE_KEY")
     );
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) return json({ error: "Unauthorized" }, 401);
+    if (userError || !user) {
+      return json({
+        error: "Unauthorized",
+        code: "UNAUTHORIZED",
+        stage,
+        requestId,
+      }, 401);
+    }
 
+    stage = "parse_body";
     const body = await safeJson(req);
     const mode = body.mode === "import" ? "import" : "list";
     const selectedIds = new Set<string>(Array.isArray(body.ids) ? body.ids.map(String) : []);
 
+    stage = "whoop_token";
     const accessToken = await getWhoopAccessToken(supabaseAdmin, user.id);
+
+    stage = "whoop_workouts";
     const workouts = await fetchWorkouts(accessToken);
+
+    stage = "candidates";
     const candidates = await toCandidates(supabaseAdmin, user.id, workouts);
 
     if (mode === "list") {
@@ -69,6 +153,7 @@ Deno.serve(async (req) => {
       .map((candidate) => byId.get(candidate.id))
       .filter(Boolean);
 
+    stage = "import";
     const imported = await importWorkouts(supabaseAdmin, user.id, workoutsToImport);
     return json({
       imported,
@@ -76,7 +161,7 @@ Deno.serve(async (req) => {
       message: `Whoop: ${imported} atividades importadas.`,
     });
   } catch (err) {
-    return json({ error: err instanceof Error ? err.message : "Erro desconhecido" }, 500);
+    return fail(err, { provider: "whoop", requestId, stage });
   }
 });
 
@@ -95,20 +180,45 @@ async function getWhoopAccessToken(supabaseAdmin: any, userId: string): Promise<
     .eq("user_id", userId)
     .eq("provider", "whoop")
     .maybeSingle();
-  if (error) throw error;
-  if (!tokenRow?.access_token) throw new Error("Whoop nao conectado. Autorize primeiro.");
+  if (error) throw dbError("whoop_token_select", error);
+  if (!tokenRow?.access_token) {
+    throw new SyncError(
+      409,
+      "WHOOP_NOT_CONNECTED",
+      "Whoop precisa ser conectado antes de sincronizar."
+    );
+  }
 
   let accessToken = tokenRow.access_token;
   const expiresAt = tokenRow.expires_at ? new Date(tokenRow.expires_at) : new Date(0);
   if (expiresAt < new Date()) {
+    if (!tokenRow.refresh_token) {
+      throw new SyncError(
+        409,
+        "WHOOP_RECONNECT_REQUIRED",
+        "Token Whoop expirado. Reconecte o Whoop e tente novamente."
+      );
+    }
+
     const refreshed = await refreshWhoopToken(tokenRow.refresh_token);
-    if (!refreshed) throw new Error("Token expirado. Autorize o Whoop novamente.");
+    if (!refreshed) {
+      throw new SyncError(
+        409,
+        "WHOOP_RECONNECT_REQUIRED",
+        "Token Whoop expirado. Reconecte o Whoop e tente novamente."
+      );
+    }
+    if (!refreshed.access_token || !refreshed.expires_in) {
+      throw new SyncError(424, "WHOOP_REFRESH_INVALID_RESPONSE", "Whoop retornou uma renovacao de token inesperada.");
+    }
+
     accessToken = refreshed.access_token;
-    await supabaseAdmin.from("integration_tokens").update({
+    const { error: updateError } = await supabaseAdmin.from("integration_tokens").update({
       access_token: refreshed.access_token,
-      refresh_token: refreshed.refresh_token,
+      refresh_token: refreshed.refresh_token ?? tokenRow.refresh_token,
       expires_at: new Date(Date.now() + refreshed.expires_in * 1000).toISOString(),
     }).eq("user_id", userId).eq("provider", "whoop");
+    if (updateError) throw dbError("whoop_token_update", updateError);
   }
 
   return accessToken;
@@ -122,7 +232,12 @@ async function fetchWorkouts(accessToken: string) {
     accessToken,
     `/workout?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`
   );
-  return data.records ?? [];
+  if (!Array.isArray(data?.records)) {
+    throw new SyncError(424, "WHOOP_INVALID_RESPONSE", "Whoop retornou uma resposta inesperada.", {
+      hasRecords: Boolean(data?.records),
+    });
+  }
+  return data.records;
 }
 
 async function toCandidates(supabaseAdmin: any, userId: string, workouts: any[]) {
@@ -135,7 +250,7 @@ async function toCandidates(supabaseAdmin: any, userId: string, workouts: any[])
         .eq("provider", "whoop")
         .in("external_id", ids)
     : { data: [], error: null };
-  if (error) throw error;
+  if (error) throw dbError("whoop_imports_select", error);
 
   const imported = new Set((importedRows ?? []).map((row: any) => String(row.external_id)));
   return workouts.map((workout: any) => ({
@@ -163,12 +278,13 @@ async function importWorkouts(supabaseAdmin: any, userId: string, workouts: any[
 
     if (!id || !date || !mapping || (!kcal && !minutes && !avgHr)) continue;
 
-    const { data: existing } = await supabaseAdmin
+    const { data: existing, error: existingError } = await supabaseAdmin
       .from("daily_logs")
       .select("*")
       .eq("user_id", userId)
       .eq("date", date)
       .maybeSingle();
+    if (existingError) throw dbError("whoop_daily_log_select", existingError);
 
     const payload: Record<string, unknown> = { user_id: userId, date };
     if (kcal != null) payload[mapping.kcalField] = Number(existing?.[mapping.kcalField] ?? 0) + kcal;
@@ -189,7 +305,7 @@ async function importWorkouts(supabaseAdmin: any, userId: string, workouts: any[
     const { error: upsertError } = await supabaseAdmin
       .from("daily_logs")
       .upsert(payload, { onConflict: "user_id,date" });
-    if (upsertError) throw upsertError;
+    if (upsertError) throw dbError("whoop_daily_log_upsert", upsertError);
 
     const { error: markerError } = await supabaseAdmin
       .from("activity_imports")
@@ -203,7 +319,7 @@ async function importWorkouts(supabaseAdmin: any, userId: string, workouts: any[
           sport_id: workout.sport_id ?? workout.sportId ?? null,
         },
       }, { onConflict: "user_id,provider,external_id" });
-    if (markerError) throw markerError;
+    if (markerError) throw dbError("whoop_import_marker_upsert", markerError);
 
     imported++;
   }
@@ -280,7 +396,21 @@ async function whoopGet(token: string, path: string) {
   const res = await fetch(`${WHOOP_API}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) throw new Error(`Whoop API error: ${res.status} ${path}`);
+  if (!res.ok) {
+    const reconnect = res.status === 401 || res.status === 403;
+    throw new SyncError(
+      reconnect ? 409 : 424,
+      reconnect ? "WHOOP_RECONNECT_REQUIRED" : "WHOOP_API_ERROR",
+      reconnect
+        ? "Whoop recusou o token atual. Reconecte o Whoop e tente novamente."
+        : "Whoop recusou a busca de atividades. Tente novamente em alguns minutos.",
+      {
+        status: res.status,
+        path,
+        body: await responseSnippet(res),
+      }
+    );
+  }
   return res.json();
 }
 
@@ -291,10 +421,16 @@ async function refreshWhoopToken(refreshToken: string) {
     body: new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
-      client_id: Deno.env.get("WHOOP_CLIENT_ID")!,
-      client_secret: Deno.env.get("WHOOP_CLIENT_SECRET")!,
+      client_id: requireEnv("WHOOP_CLIENT_ID"),
+      client_secret: requireEnv("WHOOP_CLIENT_SECRET"),
     }),
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    console.error("whoop token refresh failed", JSON.stringify({
+      status: res.status,
+      body: await responseSnippet(res),
+    }));
+    return null;
+  }
   return res.json();
 }

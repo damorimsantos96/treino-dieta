@@ -77,6 +77,35 @@ function formatCandidateMeta(candidate: SyncCandidate): string {
   return parts.join(" | ");
 }
 
+function formatFunctionErrorPayload(payload: any): string {
+  if (!payload || typeof payload !== "object") return "Sincronizacao falhou.";
+  const code = payload.code ? `${payload.code}: ` : "";
+  const message = payload.error ?? payload.message ?? "Sincronizacao falhou.";
+  const stage = payload.stage ? ` Etapa: ${payload.stage}.` : "";
+  const requestId = payload.requestId ? ` ID: ${payload.requestId}.` : "";
+  return `${code}${message}${stage}${requestId}`.trim();
+}
+
+async function extractFunctionError(error: any): Promise<string> {
+  const context = error?.context;
+  if (context && typeof context.json === "function") {
+    try {
+      return formatFunctionErrorPayload(await context.json());
+    } catch {
+      // Fall through to text/message handling.
+    }
+  }
+  if (context && typeof context.text === "function") {
+    try {
+      const text = await context.text();
+      if (text) return text;
+    } catch {
+      // Fall through to the Supabase client message.
+    }
+  }
+  return error?.message ?? "Sincronizacao falhou.";
+}
+
 export default function ConfiguracoesScreen() {
   const { signOut, user } = useAuthStore();
   const { isAvailable, isEnabled, enableBiometrics, disableBiometrics } = useBiometrics();
@@ -120,8 +149,11 @@ export default function ConfiguracoesScreen() {
     const { data, error } = await supabase.functions.invoke(`sync-${provider}`, {
       body: { mode, ids },
     });
-    if (error || data?.fallback) {
-      throw new Error(data?.error ?? error?.message ?? "Sincronizacao falhou.");
+    if (error) {
+      throw new Error(await extractFunctionError(error));
+    }
+    if (data?.error || data?.fallback) {
+      throw new Error(formatFunctionErrorPayload(data));
     }
     return data;
   }
