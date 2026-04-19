@@ -60,7 +60,6 @@ export default function TabsLayout() {
           title: "Registrar",
           href: null,
           tabBarIcon: ({ focused }) => <TabIcon name="add-circle" focused={focused} />,
-          tabBarButton: () => null,
         }}
       />
       <Tabs.Screen
