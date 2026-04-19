@@ -184,6 +184,7 @@ function PRAttemptChart({
               key={attempt.id}
               activeOpacity={0.8}
               onPress={() => setSelected((current) => current === index ? null : index)}
+              {...({ onPointerEnter: () => setSelected(index), onPointerLeave: () => setSelected(null) } as any)}
               style={{ flex: 1, minWidth: 10, height: CHART_H, justifyContent: "flex-end" }}
             >
               <View
