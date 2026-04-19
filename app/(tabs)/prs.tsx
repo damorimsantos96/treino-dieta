@@ -151,10 +151,14 @@ function PRAttemptChart({
   movement: PRMovement | null;
   attempts: PRAttempt[];
 }) {
+  const [chartWidth, setChartWidth] = useState(300);
   const [selected, setSelected] = useState<number | null>(null);
+  const [hovered, setHovered] = useState<number | null>(null);
+
   if (!movement) return null;
 
   const ordered = [...attempts].sort((a, b) => a.date.localeCompare(b.date));
+
   if (ordered.length === 0) {
     return (
       <Text className="text-surface-500 text-sm">
@@ -163,56 +167,161 @@ function PRAttemptChart({
     );
   }
 
-  const values = ordered.map((item) => item.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const selectedAttempt = selected == null ? null : ordered[selected];
+  if (ordered.length === 1) {
+    const only = ordered[0];
+    return (
+      <View className="bg-surface-700/40 border border-surface-600/30 rounded-xl px-4 py-3.5 gap-0.5">
+        <Text className="text-surface-400 text-xs">
+          {format(parseISO(only.date), "dd/MM/yyyy", { locale: ptBR })}
+          {only.is_pr ? "  ·  PR" : ""}
+        </Text>
+        <Text className="text-white text-lg font-bold">
+          {formatValue(only.value, movement.unit)}
+        </Text>
+      </View>
+    );
+  }
 
   const CHART_H = 144;
+  const CHART_T = 8;
+  const CHART_L = 36;
+  const CHART_R = 16;
+  const CHART_B = 24;
+
+  const values = ordered.map((a) => a.value);
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
+  const range = maxV - minV || 1;
+
+  const plotWidth = Math.max(80, chartWidth - CHART_L - CHART_R);
+  const plotHeight = CHART_H - CHART_T;
+  const n = ordered.length;
+  const pointW = n > 1 ? plotWidth / (n - 1) : plotWidth;
+
+  const activeIndex = hovered ?? selected;
+  const activeAttempt = activeIndex != null ? ordered[activeIndex] : null;
+
+  const bestLabel = formatValue(movement.lower_is_better ? minV : maxV, movement.unit);
+  const worstLabel = formatValue(movement.lower_is_better ? maxV : minV, movement.unit);
+
+  function computeCy(value: number): number {
+    const frac = movement.lower_is_better
+      ? (maxV - value) / range
+      : (value - minV) / range;
+    return plotHeight - frac * (plotHeight - 8) - 4;
+  }
 
   return (
-    <View className="gap-3">
-      <View style={{ height: CHART_H, flexDirection: "row", alignItems: "flex-end", gap: 4 }}>
-        {ordered.map((attempt, index) => {
-          const normalized = movement.lower_is_better
-            ? (max - attempt.value) / range
-            : (attempt.value - min) / range;
-          const barH = Math.max(8, Math.round((0.18 + normalized * 0.76) * CHART_H));
-          return (
-            <TouchableOpacity
-              key={attempt.id}
-              activeOpacity={0.8}
-              onPress={() => setSelected((current) => current === index ? null : index)}
-              {...({ onPointerEnter: () => setSelected(index), onPointerLeave: () => setSelected(null) } as any)}
-              style={{ flex: 1, minWidth: 10, height: CHART_H, justifyContent: "flex-end" }}
-            >
+    <View
+      onLayout={(e) => {
+        const w = e.nativeEvent.layout.width;
+        if (w > 0) setChartWidth(w);
+      }}
+      className="gap-3"
+    >
+      <View style={{ height: CHART_H + CHART_B, position: "relative", width: chartWidth }}>
+        <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">{bestLabel}</Text>
+        <Text className="absolute left-0 bottom-6 text-surface-600 text-[10px]">{worstLabel}</Text>
+
+        {/* Line segments + dots (pointerEvents none so overlay handles interaction) */}
+        <View
+          pointerEvents="none"
+          className="absolute overflow-hidden"
+          style={{ left: CHART_L, right: CHART_R, top: CHART_T, height: plotHeight }}
+        >
+          {ordered.map((attempt, index) => {
+            if (index === 0) return null;
+            const prev = ordered[index - 1];
+            const x1 = (index - 1) * pointW;
+            const x2 = index * pointW;
+            const y1 = computeCy(prev.value);
+            const y2 = computeCy(attempt.value);
+            const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+            const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+            return (
               <View
+                key={`seg-${index}`}
                 style={{
-                  height: barH,
-                  backgroundColor: attempt.is_pr ? "#10b981" : "#3b82f6",
-                  opacity: selected == null || selected === index ? 0.95 : 0.45,
-                  borderRadius: 5,
+                  position: "absolute",
+                  left: x1,
+                  top: y1,
+                  width: len,
+                  height: 2,
+                  backgroundColor: "#3b82f6",
+                  borderRadius: 2,
+                  transformOrigin: "left center",
+                  transform: [{ rotate: `${angle}deg` }],
+                  opacity: activeIndex != null && activeIndex !== index && activeIndex !== index - 1 ? 0.35 : 0.9,
                 }}
               />
-            </TouchableOpacity>
-          );
-        })}
+            );
+          })}
+          {ordered.map((attempt, index) => {
+            const x = index * pointW;
+            const y = computeCy(attempt.value);
+            const isActive = activeIndex === index;
+            const r = isActive ? 5 : 3;
+            return (
+              <View
+                key={`dot-${index}`}
+                style={{
+                  position: "absolute",
+                  left: x - r,
+                  top: y - r,
+                  width: r * 2,
+                  height: r * 2,
+                  borderRadius: r,
+                  backgroundColor: attempt.is_pr ? "#f59e0b" : "#3b82f6",
+                  opacity: activeIndex != null && !isActive ? 0.45 : 1,
+                }}
+              />
+            );
+          })}
+        </View>
+
+        {/* Interaction overlay */}
+        <TouchableOpacity
+          activeOpacity={1}
+          className="absolute"
+          style={{ left: CHART_L, right: CHART_R, top: CHART_T, height: plotHeight }}
+          onPress={(e) => {
+            const index = Math.max(0, Math.min(n - 1, Math.round(e.nativeEvent.locationX / pointW)));
+            setSelected((prev) => prev === index ? null : index);
+          }}
+          {...({
+            onPointerMove: (e: any) => {
+              const x = e.nativeEvent.offsetX ?? e.nativeEvent.locationX;
+              setHovered(Math.max(0, Math.min(n - 1, Math.round(x / pointW))));
+            },
+            onPointerLeave: () => setHovered(null),
+          } as any)}
+        />
+
+        {/* X axis: first, middle (if >2), last */}
+        <View
+          className="absolute bottom-0 flex-row justify-between"
+          style={{ left: CHART_L, right: CHART_R }}
+        >
+          <Text className="text-surface-600 text-[10px]">
+            {format(parseISO(ordered[0].date), "dd/MM/yy")}
+          </Text>
+          {n > 2 && (
+            <Text className="text-surface-600 text-[10px]">
+              {format(parseISO(ordered[Math.floor(n / 2)].date), "dd/MM/yy")}
+            </Text>
+          )}
+          <Text className="text-surface-600 text-[10px]">
+            {format(parseISO(ordered[n - 1].date), "dd/MM/yy")}
+          </Text>
+        </View>
       </View>
-      <View className="flex-row justify-between">
-        <Text className="text-surface-600 text-[10px]">
-          {format(parseISO(ordered[0].date), "dd/MM/yy", { locale: ptBR })}
-        </Text>
-        <Text className="text-surface-600 text-[10px]">
-          {format(parseISO(ordered[ordered.length - 1].date), "dd/MM/yy", { locale: ptBR })}
-        </Text>
-      </View>
-      {selectedAttempt && (
+
+      {activeAttempt && (
         <View className="bg-surface-700/50 border border-surface-600/40 rounded-xl px-3 py-2">
           <Text className="text-white text-xs font-semibold">
-            {format(parseISO(selectedAttempt.date), "dd/MM/yy", { locale: ptBR })}:{" "}
-            {formatValue(selectedAttempt.value, movement.unit)}
-            {selectedAttempt.is_pr ? " - PR" : ""}
+            {format(parseISO(activeAttempt.date), "dd/MM/yy", { locale: ptBR })}:{" "}
+            {formatValue(activeAttempt.value, movement.unit)}
+            {activeAttempt.is_pr ? " · PR" : ""}
           </Text>
         </View>
       )}
