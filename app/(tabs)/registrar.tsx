@@ -336,7 +336,7 @@ export default function RegistrarScreen() {
     >
       <ScrollView
         className="flex-1"
-        contentContainerClassName="px-4 pt-14 pb-10 gap-4"
+        contentContainerClassName="px-4 pt-6 pb-10 gap-4"
         keyboardShouldPersistTaps="handled"
       >
         {/* Header */}
@@ -354,14 +354,6 @@ export default function RegistrarScreen() {
             >
               <Ionicons name="chevron-back" size={20} color="#72737f" />
             </TouchableOpacity>
-            {!isToday && (
-              <TouchableOpacity
-                onPress={() => setToday(new Date())}
-                className="px-2 py-1 bg-surface-700/50 rounded-lg"
-              >
-                <Text className="text-brand-400 text-xs font-semibold">Hoje</Text>
-              </TouchableOpacity>
-            )}
             <TouchableOpacity
               onPress={() => setToday((d) => addDays(d, 1))}
               disabled={isToday}

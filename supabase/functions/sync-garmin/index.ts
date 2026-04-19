@@ -11,6 +11,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const GARMIN_SSO_URL = "https://sso.garmin.com/sso";
 const GARMIN_CONNECT_API_URL = "https://connectapi.garmin.com";
 const GARMIN_MOBILE_USER_AGENT = "GCM-iOS-5.7.2.1";
+const GARMIN_PUBLIC_OAUTH_CONSUMER: GarminOAuthConsumer = {
+  key: "fc3e99d2-118c-44b8-8ae3-03370dde24c0",
+  secret: "E08WAR897WEy2knn7aFBrvegVAf0AFdWBBF",
+};
 const GARMIN_ACTIVITY_URLS: Array<{ url: string; auth: GarminEndpointAuth }> = [
   {
     url: `${GARMIN_CONNECT_API_URL}/activitylist-service/activities/search/activities`,
@@ -83,7 +87,28 @@ function fail(error: unknown, context: { provider: string; requestId: string; st
     stage: context.stage,
     requestId: context.requestId,
     fallback: true,
+    details: detailsForClient(syncError),
   }, syncError.status);
+}
+
+function detailsForClient(error: SyncError): unknown | undefined {
+  if (!error.code.startsWith("GARMIN_")) return undefined;
+  return redactSensitiveDetails(error.details);
+}
+
+function redactSensitiveDetails(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSensitiveDetails);
+  if (!value || typeof value !== "object") return value;
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (/token|secret|cookie|authorization|password/i.test(key)) {
+      redacted[key] = "[redacted]";
+    } else {
+      redacted[key] = redactSensitiveDetails(item);
+    }
+  }
+  return redacted;
 }
 
 function requireEnv(name: string): string {
@@ -390,7 +415,7 @@ async function garminLogin(email: string, password: string): Promise<GarminSessi
 
   const failures: Record<string, unknown>[] = [];
   let cookieFallback: GarminSession | null = null;
-  for (const strategy of [garminSigninLogin, garminTicketLogin]) {
+  for (const strategy of [garminConnectLogin, garminSigninLogin, garminTicketLogin]) {
     try {
       const session = await strategy(email, password);
       if (session.bearerToken) return session;
@@ -408,6 +433,74 @@ async function garminLogin(email: string, password: string): Promise<GarminSessi
     "Garmin recusou o login. Verifique credenciais, MFA ou bloqueio de seguranca.",
     { strategies: failures }
   );
+}
+
+async function garminConnectLogin(email: string, password: string): Promise<GarminSession> {
+  const signinUrl = new URL(`${GARMIN_SSO_URL}/signin`);
+  signinUrl.searchParams.set("service", "https://connect.garmin.com/modern");
+  signinUrl.searchParams.set("clientId", "GarminConnect");
+  signinUrl.searchParams.set("consumeServiceTicket", "false");
+
+  const loginPageRes = await fetch(signinUrl.toString(), {
+    headers: {
+      ...GARMIN_WEB_HEADERS,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+    redirect: "follow",
+  });
+  if (!loginPageRes.ok) {
+    throw new SyncError(424, "GARMIN_CONNECT_LOGIN_PAGE_FAILED", "Garmin nao abriu a tela de login Connect.", {
+      status: loginPageRes.status,
+      body: await responseSnippet(loginPageRes),
+    });
+  }
+
+  const loginPageText = await loginPageRes.text();
+  const csrf =
+    loginPageText.match(/name="_csrf"\s+value="([^"]+)"/)?.[1] ??
+    loginPageText.match(/name="csrfToken"\s+value="([^"]+)"/)?.[1] ??
+    "";
+  if (!csrf) {
+    throw new SyncError(424, "GARMIN_CONNECT_CSRF_NOT_FOUND", "Garmin mudou a tela de login Connect.", {
+      body: loginPageText.slice(0, 500),
+    });
+  }
+
+  const cookies = cookieHeaderFromResponses(loginPageRes);
+  const loginRes = await fetch(signinUrl.toString(), {
+    method: "POST",
+    headers: {
+      ...GARMIN_WEB_HEADERS,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      Cookie: cookies,
+      Origin: "https://sso.garmin.com",
+      Referer: signinUrl.toString(),
+    },
+    body: new URLSearchParams({
+      username: email,
+      password,
+      embed: "true",
+      _csrf: csrf,
+      _eventId: "submit",
+      displayNameRequired: "false",
+    }),
+    redirect: "manual",
+  });
+
+  const allCookies = mergeCookieHeaders(cookies, cookieHeaderFromResponses(loginRes));
+  const location = loginRes.headers.get("location") ?? "";
+  const body = loginRes.status === 200 ? await loginRes.text() : "";
+  const ticket = extractGarminTicket(location) ?? extractGarminTicket(body);
+  if (!ticket) {
+    throw new SyncError(409, "GARMIN_CONNECT_AUTH_FAILED", "Garmin recusou o login Connect.", {
+      status: loginRes.status,
+      hasLocation: Boolean(location),
+      hints: garminLoginHints(body),
+    });
+  }
+
+  return redeemGarminTicket(ticket, allCookies);
 }
 
 async function garminSigninLogin(email: string, password: string): Promise<GarminSession> {
@@ -623,8 +716,7 @@ async function fetchGarminBearerToken(ticket: string): Promise<string> {
   const preauthorizedUrl = `${GARMIN_CONNECT_API_URL}/oauth-service/oauth/preauthorized`;
   const preauthorizedParams = {
     ticket,
-    "login-url": "https://sso.garmin.com/sso/embed",
-    "accepts-mfa-tokens": "true",
+    "login-url": "https://sso.garmin.com/sso",
   };
   const preauthorizedSearch = new URLSearchParams(preauthorizedParams);
   const preauthorizedRes = await fetch(`${preauthorizedUrl}?${preauthorizedSearch.toString()}`, {
@@ -697,21 +789,18 @@ async function getGarminOAuthConsumer(): Promise<GarminOAuthConsumer> {
 
   const res = await fetch("https://thegarth.s3.amazonaws.com/oauth_consumer.json", {
     headers: { Accept: "application/json" },
-  });
+  }).catch(() => null);
+  if (!res) return GARMIN_PUBLIC_OAUTH_CONSUMER;
+
   if (!res.ok) {
-    throw new SyncError(424, "GARMIN_OAUTH_CONSUMER_FAILED", "Nao foi possivel carregar a chave publica OAuth do Garmin.", {
-      status: res.status,
-      body: await responseSnippet(res),
-    });
+    return GARMIN_PUBLIC_OAUTH_CONSUMER;
   }
 
   const data = await res.json();
   const remoteKey = data.consumer_key ?? data.consumerKey ?? data.key;
   const remoteSecret = data.consumer_secret ?? data.consumerSecret ?? data.secret;
   if (!remoteKey || !remoteSecret) {
-    throw new SyncError(424, "GARMIN_OAUTH_CONSUMER_INVALID", "Chave publica OAuth do Garmin veio em formato inesperado.", {
-      keys: Object.keys(data ?? {}),
-    });
+    return GARMIN_PUBLIC_OAUTH_CONSUMER;
   }
 
   return { key: String(remoteKey), secret: String(remoteSecret) };

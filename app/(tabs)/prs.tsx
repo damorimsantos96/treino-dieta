@@ -219,8 +219,9 @@ function PRAttemptChart({
         if (w > 0) setChartWidth(w);
       }}
       className="gap-3"
+      style={{ alignSelf: "stretch", width: "100%" }}
     >
-      <View style={{ height: CHART_H + CHART_B, position: "relative", width: chartWidth }}>
+      <View style={{ height: CHART_H + CHART_B, position: "relative", width: "100%" }}>
         <Text className="absolute left-0 top-0 text-surface-600 text-[10px]">{bestLabel}</Text>
         <Text className="absolute left-0 bottom-6 text-surface-600 text-[10px]">{worstLabel}</Text>
 

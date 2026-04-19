@@ -62,7 +62,7 @@ export default function HojeScreen() {
   return (
     <ScrollView
       className="flex-1 bg-surface-900"
-      contentContainerClassName="px-4 pt-14 pb-8 gap-4"
+      contentContainerClassName="px-4 pt-6 pb-8 gap-4"
       refreshControl={
         <RefreshControl
           refreshing={isRefetching}

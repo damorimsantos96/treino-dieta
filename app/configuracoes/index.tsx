@@ -294,7 +294,7 @@ export default function ConfiguracoesScreen() {
     <>
     <ScrollView
       className="flex-1 bg-surface-900"
-      contentContainerClassName="px-4 pt-14 pb-10"
+      contentContainerClassName="px-4 pt-6 pb-10"
     >
       <View className="flex-row items-center gap-3 mb-6">
         <TouchableOpacity onPress={() => router.back()}>

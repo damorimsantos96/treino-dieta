@@ -5,6 +5,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "../src/styles/global.css";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/stores/auth";
+import { useAppUpdate } from "@/hooks/useAppUpdate";
+import { useNativeVersionGate } from "@/hooks/useNativeVersionGate";
+import { UpdateBanner } from "@/components/ui/UpdateBanner";
+import { NativeUpdateModal } from "@/components/ui/NativeUpdateModal";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -14,6 +18,22 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+function UpdateLayer() {
+  const { isUpdatePending } = useAppUpdate();
+  const { needsReinstall, downloadUrl, minVersion, releaseNotes } = useNativeVersionGate();
+  return (
+    <>
+      <UpdateBanner visible={isUpdatePending} />
+      <NativeUpdateModal
+        visible={needsReinstall}
+        downloadUrl={downloadUrl}
+        minVersion={minVersion}
+        releaseNotes={releaseNotes}
+      />
+    </>
+  );
+}
 
 export default function RootLayout() {
   const setSession = useAuthStore((s) => s.setSession);
@@ -61,6 +81,7 @@ export default function RootLayout() {
           options={{ presentation: "modal", animation: "slide_from_bottom" }}
         />
       </Stack>
+      <UpdateLayer />
     </QueryClientProvider>
   );
 }
