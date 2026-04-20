@@ -11,6 +11,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const GARMIN_SSO_URL = "https://sso.garmin.com/sso";
 const GARMIN_CONNECT_API_URL = "https://connectapi.garmin.com";
 const GARMIN_MOBILE_USER_AGENT = "GCM-iOS-5.7.2.1";
+const GARMIN_SESSION_PROVIDER = "garmin";
+const GARMIN_BEARER_DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
+const GARMIN_COOKIE_TTL_MS = 6 * 60 * 60 * 1000;
+const GARMIN_TOKEN_REFRESH_SKEW_MS = 10 * 60 * 1000;
 const GARMIN_PUBLIC_OAUTH_CONSUMER: GarminOAuthConsumer = {
   key: "fc3e99d2-118c-44b8-8ae3-03370dde24c0",
   secret: "E08WAR897WEy2knn7aFBrvegVAf0AFdWBBF",
@@ -19,6 +23,10 @@ const GARMIN_ACTIVITY_URLS: Array<{ url: string; auth: GarminEndpointAuth }> = [
   {
     url: `${GARMIN_CONNECT_API_URL}/activitylist-service/activities/search/activities`,
     auth: "bearer",
+  },
+  {
+    url: "https://connect.garmin.com/modern/proxy/activitylist-service/activities/search/activities",
+    auth: "cookies",
   },
   {
     url: "https://connect.garmin.com/activitylist-service/activities/search/activities",
@@ -35,8 +43,13 @@ type GarminOAuthConsumer = { key: string; secret: string };
 type GarminSession = {
   cookies: string;
   bearerToken: string | null;
+  bearerExpiresAt?: string | null;
   authMode: "oauth" | "cookies";
   oauthFailure?: Record<string, unknown>;
+};
+type GarminBearerToken = {
+  accessToken: string;
+  expiresAt: string | null;
 };
 
 const CORS = {
@@ -178,14 +191,37 @@ Deno.serve(async (req) => {
     const mode = body.mode === "import" ? "import" : "list";
     const selectedIds = new Set<string>(Array.isArray(body.ids) ? body.ids.map(String) : []);
 
-    stage = "garmin_login";
-    const garminSession = await garminLogin(
-      requireEnv("GARMIN_EMAIL"),
-      requireEnv("GARMIN_PASSWORD")
-    );
+    stage = "garmin_session";
+    let garminSession = await getCachedGarminSession(supabaseAdmin, user.id);
+    let usedCachedSession = Boolean(garminSession);
+    if (!garminSession) {
+      stage = "garmin_login";
+      garminSession = await garminLogin(
+        requireEnv("GARMIN_EMAIL"),
+        requireEnv("GARMIN_PASSWORD")
+      );
+      await saveCachedGarminSession(supabaseAdmin, user.id, garminSession);
+    }
 
     stage = "garmin_activities";
-    const activities = await fetchGarminActivities(garminSession, 80);
+    let activities: any[];
+    try {
+      activities = await fetchGarminActivities(garminSession, 80);
+    } catch (error) {
+      if (!usedCachedSession || !isGarminSessionRejected(error)) throw error;
+
+      await clearCachedGarminSession(supabaseAdmin, user.id);
+      stage = "garmin_login";
+      garminSession = await garminLogin(
+        requireEnv("GARMIN_EMAIL"),
+        requireEnv("GARMIN_PASSWORD")
+      );
+      usedCachedSession = false;
+      await saveCachedGarminSession(supabaseAdmin, user.id, garminSession);
+
+      stage = "garmin_activities";
+      activities = await fetchGarminActivities(garminSession, 80);
+    }
     if (!Array.isArray(activities)) {
       throw new SyncError(424, "GARMIN_ACTIVITIES_INVALID_RESPONSE", "Garmin retornou uma lista inesperada de atividades.");
     }
@@ -237,6 +273,90 @@ async function safeJson(req: Request) {
   } catch {
     return {};
   }
+}
+
+async function getCachedGarminSession(supabaseAdmin: any, userId: string): Promise<GarminSession | null> {
+  const { data: tokenRow, error } = await supabaseAdmin
+    .from("integration_tokens")
+    .select("access_token, expires_at, metadata")
+    .eq("user_id", userId)
+    .eq("provider", GARMIN_SESSION_PROVIDER)
+    .maybeSingle();
+  if (error) throw dbError("garmin_session_select", error);
+
+  const metadata = tokenRow?.metadata ?? {};
+  const bearerToken = typeof tokenRow?.access_token === "string" ? tokenRow.access_token.trim() : "";
+  const bearerExpiresAt = tokenRow?.expires_at ? new Date(tokenRow.expires_at).getTime() : 0;
+  const bearerValid = Boolean(
+    bearerToken &&
+    (!bearerExpiresAt || bearerExpiresAt - GARMIN_TOKEN_REFRESH_SKEW_MS > Date.now())
+  );
+
+  const cookies = typeof metadata.cookies === "string" ? metadata.cookies.trim() : "";
+  const cookiesExpiresAt = metadata.cookies_expires_at
+    ? new Date(metadata.cookies_expires_at).getTime()
+    : 0;
+  const cookiesValid = Boolean(cookies && (!cookiesExpiresAt || cookiesExpiresAt > Date.now()));
+
+  if (!bearerValid && !cookiesValid) return null;
+
+  return {
+    cookies: cookiesValid ? cookies : "",
+    bearerToken: bearerValid ? bearerToken : null,
+    bearerExpiresAt: bearerValid ? tokenRow.expires_at : null,
+    authMode: bearerValid ? "oauth" : "cookies",
+  };
+}
+
+async function saveCachedGarminSession(
+  supabaseAdmin: any,
+  userId: string,
+  session: GarminSession
+) {
+  const now = Date.now();
+  const expiresAt = session.bearerToken
+    ? session.bearerExpiresAt ?? new Date(now + GARMIN_BEARER_DEFAULT_TTL_MS).toISOString()
+    : null;
+  const cookiesExpiresAt = session.cookies
+    ? new Date(now + GARMIN_COOKIE_TTL_MS).toISOString()
+    : null;
+
+  const { error } = await supabaseAdmin
+    .from("integration_tokens")
+    .upsert({
+      user_id: userId,
+      provider: GARMIN_SESSION_PROVIDER,
+      access_token: session.bearerToken,
+      refresh_token: null,
+      expires_at: expiresAt,
+      metadata: {
+        auth_mode: session.authMode,
+        cookies: session.cookies || null,
+        cookies_expires_at: cookiesExpiresAt,
+        oauth_failure: session.oauthFailure ?? null,
+        saved_at: new Date(now).toISOString(),
+      },
+    }, { onConflict: "user_id,provider" });
+  if (error) throw dbError("garmin_session_upsert", error);
+}
+
+async function clearCachedGarminSession(supabaseAdmin: any, userId: string) {
+  const { error } = await supabaseAdmin
+    .from("integration_tokens")
+    .delete()
+    .eq("user_id", userId)
+    .eq("provider", GARMIN_SESSION_PROVIDER);
+  if (error) throw dbError("garmin_session_delete", error);
+}
+
+function isGarminSessionRejected(error: unknown): boolean {
+  if (!(error instanceof SyncError)) return false;
+  const attempts = Array.isArray(error.details?.attempts) ? error.details.attempts : [];
+  return attempts.some((attempt: any) =>
+    attempt?.status === 401 ||
+    attempt?.status === 403 ||
+    attempt?.reason === "missing_bearer_token"
+  );
 }
 
 async function toCandidates(supabaseAdmin: any, userId: string, activities: any[]) {
@@ -581,7 +701,7 @@ async function garminSigninLogin(email: string, password: string): Promise<Garmi
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         Cookie: allCookies,
       },
-      redirect: "manual",
+      redirect: "follow",
     });
     allCookies = mergeCookieHeaders(allCookies, cookieHeaderFromResponses(redirectRes));
   }
@@ -592,7 +712,7 @@ async function garminSigninLogin(email: string, password: string): Promise<Garmi
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       Cookie: allCookies,
     },
-    redirect: "manual",
+    redirect: "follow",
   });
   allCookies = mergeCookieHeaders(allCookies, cookieHeaderFromResponses(connectRes));
   if (!allCookies) {
@@ -670,10 +790,10 @@ async function garminTicketLogin(email: string, password: string): Promise<Garmi
 }
 
 async function redeemGarminTicket(ticket: string, cookies: string): Promise<GarminSession> {
-  let bearerToken: string | null = null;
+  let bearer: GarminBearerToken | null = null;
   let oauthFailure: Record<string, unknown> | undefined;
   try {
-    bearerToken = await fetchGarminBearerToken(ticket);
+    bearer = await fetchGarminBearerToken(ticket);
   } catch (error) {
     oauthFailure = errorDetailsForLog(error);
     console.warn("Garmin OAuth token exchange failed", JSON.stringify(oauthFailure));
@@ -686,7 +806,7 @@ async function redeemGarminTicket(ticket: string, cookies: string): Promise<Garm
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       Cookie: allCookies,
     },
-    redirect: "manual",
+    redirect: "follow",
   });
   allCookies = mergeCookieHeaders(allCookies, cookieHeaderFromResponses(redeemRes));
 
@@ -696,22 +816,23 @@ async function redeemGarminTicket(ticket: string, cookies: string): Promise<Garm
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       Cookie: allCookies,
     },
-    redirect: "manual",
+    redirect: "follow",
   });
   allCookies = mergeCookieHeaders(allCookies, cookieHeaderFromResponses(connectRes));
-  if (!allCookies && !bearerToken) {
+  if (!allCookies && !bearer?.accessToken) {
     throw new SyncError(424, "GARMIN_SESSION_EMPTY", "Garmin nao retornou cookies de sessao.");
   }
 
   return {
     cookies: allCookies,
-    bearerToken,
-    authMode: bearerToken ? "oauth" : "cookies",
+    bearerToken: bearer?.accessToken ?? null,
+    bearerExpiresAt: bearer?.expiresAt ?? null,
+    authMode: bearer?.accessToken ? "oauth" : "cookies",
     oauthFailure,
   };
 }
 
-async function fetchGarminBearerToken(ticket: string): Promise<string> {
+async function fetchGarminBearerToken(ticket: string): Promise<GarminBearerToken> {
   const consumer = await getGarminOAuthConsumer();
   const preauthorizedUrl = `${GARMIN_CONNECT_API_URL}/oauth-service/oauth/preauthorized`;
   const preauthorizedParams = {
@@ -779,7 +900,15 @@ async function fetchGarminBearerToken(ticket: string): Promise<string> {
     });
   }
 
-  return String(accessToken);
+  const expiresIn = Number(exchangeData.expires_in ?? exchangeData.expiresIn ?? 0);
+  const expiresAt = Number.isFinite(expiresIn) && expiresIn > 0
+    ? new Date(Date.now() + expiresIn * 1000).toISOString()
+    : new Date(Date.now() + GARMIN_BEARER_DEFAULT_TTL_MS).toISOString();
+
+  return {
+    accessToken: String(accessToken),
+    expiresAt,
+  };
 }
 
 async function getGarminOAuthConsumer(): Promise<GarminOAuthConsumer> {
@@ -816,6 +945,7 @@ function garminApiHeaders(
     Accept: "application/json, text/plain, */*",
     "NK": "NT",
     "X-app-ver": "4.40.0.0",
+    "X-Requested-With": "XMLHttpRequest",
   };
 
   if (auth === "bearer") {
@@ -831,6 +961,7 @@ function garminApiHeaders(
   return {
     ...baseHeaders,
     Cookie: session.cookies,
+    Origin: "https://connect.garmin.com",
     Referer: referer ?? "https://connect.garmin.com/modern/",
     "DI-Backend": "connectapi.garmin.com",
   };

@@ -1,9 +1,28 @@
 import { createClient } from "@supabase/supabase-js";
+import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
 const FALLBACK_SUPABASE_URL = "https://placeholder.supabase.co";
 const FALLBACK_SUPABASE_ANON_KEY = "placeholder";
+
+type SupabaseExtraConfig = {
+  supabaseUrl?: string;
+  supabaseAnonKey?: string;
+  EXPO_PUBLIC_SUPABASE_URL?: string;
+  EXPO_PUBLIC_SUPABASE_ANON_KEY?: string;
+  supabase?: {
+    url?: string;
+    anonKey?: string;
+    anon_key?: string;
+  };
+};
+
+const expoExtra = (Constants.expoConfig?.extra ?? {}) as SupabaseExtraConfig;
+
+function firstNonEmpty(...values: Array<string | null | undefined>): string | undefined {
+  return values.find((value) => Boolean(value?.trim()))?.trim();
+}
 
 function normalizeSupabaseUrl(value: string | undefined): string | null {
   const raw = value?.trim().replace(/\/+$/, "");
@@ -33,10 +52,20 @@ function normalizeSupabaseUrl(value: string | undefined): string | null {
 }
 
 const configuredSupabaseUrl = normalizeSupabaseUrl(
-  process.env.EXPO_PUBLIC_SUPABASE_URL
+  firstNonEmpty(
+    process.env.EXPO_PUBLIC_SUPABASE_URL,
+    expoExtra.supabaseUrl,
+    expoExtra.EXPO_PUBLIC_SUPABASE_URL,
+    expoExtra.supabase?.url
+  )
 );
-const configuredSupabaseAnonKey =
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim() || null;
+const configuredSupabaseAnonKey = firstNonEmpty(
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+  expoExtra.supabaseAnonKey,
+  expoExtra.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+  expoExtra.supabase?.anonKey,
+  expoExtra.supabase?.anon_key
+) ?? null;
 
 export const isSupabaseConfigured = Boolean(
   configuredSupabaseUrl && configuredSupabaseAnonKey

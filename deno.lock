@@ -1,0 +1,47 @@
+{
+  "version": "5",
+  "redirects": {
+    "https://esm.sh/@supabase/supabase-js@2": "https://esm.sh/@supabase/supabase-js@2.104.0"
+  },
+  "remote": {
+    "https://esm.sh/@supabase/supabase-js@2.104.0": "67037e235b6fbec8e8eed1ca97714a9379c8cc60af4e8747dfe6cf4c43f661bb"
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@expo/metro-runtime@~55.0.9",
+        "npm:@expo/vector-icons@^15.1.1",
+        "npm:@shopify/react-native-skia@2.4.18",
+        "npm:@supabase/supabase-js@^2.103.3",
+        "npm:@tanstack/react-query@^5.99.0",
+        "npm:@types/react@~19.2.10",
+        "npm:date-fns@^4.1.0",
+        "npm:deno@^2.7.12",
+        "npm:expo-build-properties@^55.0.13",
+        "npm:expo-constants@^55.0.14",
+        "npm:expo-font@^55.0.6",
+        "npm:expo-linking@^55.0.13",
+        "npm:expo-local-authentication@^55.0.13",
+        "npm:expo-router@^55.0.12",
+        "npm:expo-secure-store@^55.0.13",
+        "npm:expo-status-bar@~55.0.5",
+        "npm:expo-updates@~55.0.20",
+        "npm:expo@55.0",
+        "npm:nativewind@^4.2.3",
+        "npm:react-dom@19.2.0",
+        "npm:react-native-gesture-handler@2.30",
+        "npm:react-native-reanimated@4.2.1",
+        "npm:react-native-safe-area-context@~5.6.2",
+        "npm:react-native-screens@4.23",
+        "npm:react-native-web@0.21",
+        "npm:react-native-worklets@0.7.2",
+        "npm:react-native@0.83.4",
+        "npm:react@19.2.0",
+        "npm:supabase@^2.93.0",
+        "npm:tailwindcss@^3.4.19",
+        "npm:typescript@~5.9.2",
+        "npm:zustand@^5.0.12"
+      ]
+    }
+  }
+}

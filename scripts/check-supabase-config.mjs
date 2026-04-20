@@ -19,6 +19,28 @@ function readLocalEnv() {
   );
 }
 
+function readAppEnv() {
+  if (!existsSync("app.json")) return {};
+
+  const appConfig = JSON.parse(readFileSync("app.json", "utf8"));
+  const extra = appConfig.expo?.extra ?? {};
+  return {
+    EXPO_PUBLIC_SUPABASE_URL:
+      extra.supabaseUrl ??
+      extra.EXPO_PUBLIC_SUPABASE_URL ??
+      extra.supabase?.url,
+    EXPO_PUBLIC_SUPABASE_ANON_KEY:
+      extra.supabaseAnonKey ??
+      extra.EXPO_PUBLIC_SUPABASE_ANON_KEY ??
+      extra.supabase?.anonKey ??
+      extra.supabase?.anon_key,
+  };
+}
+
+function firstNonEmpty(...values) {
+  return values.find((value) => typeof value === "string" && value.trim())?.trim();
+}
+
 function normalizeSupabaseUrl(value) {
   const raw = value?.trim().replace(/\/+$/, "");
   if (!raw) throw new Error("EXPO_PUBLIC_SUPABASE_URL nao configurada.");
@@ -43,12 +65,20 @@ function normalizeSupabaseUrl(value) {
 }
 
 const localEnv = readLocalEnv();
+const appEnv = readAppEnv();
 const supabaseUrl = normalizeSupabaseUrl(
-  process.env.EXPO_PUBLIC_SUPABASE_URL ?? localEnv.EXPO_PUBLIC_SUPABASE_URL
+  firstNonEmpty(
+    process.env.EXPO_PUBLIC_SUPABASE_URL,
+    localEnv.EXPO_PUBLIC_SUPABASE_URL,
+    appEnv.EXPO_PUBLIC_SUPABASE_URL
+  )
 );
 const supabaseAnonKey =
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??
-  localEnv.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  firstNonEmpty(
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+    localEnv.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+    appEnv.EXPO_PUBLIC_SUPABASE_ANON_KEY
+  );
 const { host } = new URL(supabaseUrl);
 
 if (!supabaseAnonKey) {

@@ -34,7 +34,7 @@
     },
     "updates": {
       "url": "https://u.expo.dev/baf0da1c-34c1-4e97-a621-96c2146928ae",
-      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0,
       "enabled": true
     },
@@ -60,6 +60,8 @@
       "typedRoutes": true
     },
     "extra": {
+      "supabaseUrl": "SUPABASE_URL_REDACTED",
+      "supabaseAnonKey": "SUPABASE_KEY_REDACTED",
       "router": {},
       "eas": {
         "projectId": "baf0da1c-34c1-4e97-a621-96c2146928ae"

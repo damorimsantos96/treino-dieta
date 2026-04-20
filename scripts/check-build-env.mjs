@@ -23,6 +23,28 @@ function readLocalEnv() {
   );
 }
 
+function readAppEnv() {
+  if (!existsSync("app.json")) return {};
+
+  const appConfig = JSON.parse(readFileSync("app.json", "utf8"));
+  const extra = appConfig.expo?.extra ?? {};
+  return {
+    EXPO_PUBLIC_SUPABASE_URL:
+      extra.supabaseUrl ??
+      extra.EXPO_PUBLIC_SUPABASE_URL ??
+      extra.supabase?.url,
+    EXPO_PUBLIC_SUPABASE_ANON_KEY:
+      extra.supabaseAnonKey ??
+      extra.EXPO_PUBLIC_SUPABASE_ANON_KEY ??
+      extra.supabase?.anonKey ??
+      extra.supabase?.anon_key,
+  };
+}
+
+function firstNonEmpty(...values) {
+  return values.find((value) => typeof value === "string" && value.trim())?.trim();
+}
+
 function normalizeSupabaseUrl(value) {
   const raw = value?.trim().replace(/\/+$/, "");
   if (!raw || raw === "https://placeholder.supabase.co") return null;
@@ -52,8 +74,12 @@ function validateAnonKey(value) {
 }
 
 const localEnv = readLocalEnv();
+const appEnv = readAppEnv();
 const env = Object.fromEntries(
-  REQUIRED_ENV.map((name) => [name, process.env[name] ?? localEnv[name]])
+  REQUIRED_ENV.map((name) => [
+    name,
+    firstNonEmpty(process.env[name], localEnv[name], appEnv[name]),
+  ])
 );
 
 const supabaseUrl = normalizeSupabaseUrl(env.EXPO_PUBLIC_SUPABASE_URL);
