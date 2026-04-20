@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Platform } from "react-native";
 import * as Updates from "expo-updates";
 import { supabase } from "@/lib/supabase";
 
@@ -19,7 +20,7 @@ export function useNativeVersionGate() {
   const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
 
   useEffect(() => {
-    if (__DEV__) return;
+    if (__DEV__ || Platform.OS === "web") return;
     async function check() {
       try {
         const { data } = await supabase
@@ -28,12 +29,17 @@ export function useNativeVersionGate() {
           .eq("id", 1)
           .single();
         if (!data) return;
-        const currentVersion = Updates.runtimeVersion ?? "0.0.0";
-        if (semverLt(currentVersion, data.min_runtime_version)) {
-          setMinVersion(data.min_runtime_version);
+        const currentVersion = Updates.runtimeVersion;
+        const minRuntimeVersion = data.min_runtime_version?.trim();
+        if (!currentVersion || !minRuntimeVersion) return;
+
+        if (semverLt(currentVersion, minRuntimeVersion)) {
+          setMinVersion(minRuntimeVersion);
           setDownloadUrl(data.apk_download_url ?? "");
           setReleaseNotes(data.release_notes);
           setNeedsReinstall(true);
+        } else {
+          setNeedsReinstall(false);
         }
       } catch {}
     }

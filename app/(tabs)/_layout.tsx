@@ -84,13 +84,7 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="configuracoes-shortcut"
-        listeners={{
-          tabPress: (event) => {
-            event.preventDefault();
-            router.push("/configuracoes");
-          },
-        }}
+        name="configuracoes"
         options={{
           title: "",
           tabBarAccessibilityLabel: "Configuracoes",

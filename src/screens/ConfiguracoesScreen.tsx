@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   TextInput,
   Linking,
+  Platform,
 } from "react-native";
 import { router } from "expo-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -258,20 +259,25 @@ export default function ConfiguracoesScreen() {
   }
 
   async function handleSignOut() {
+    async function performSignOut() {
+      try {
+        await signOut();
+      } finally {
+        qc.clear();
+        router.replace("/(auth)/login");
+      }
+    }
+
+    if (Platform.OS === "web") {
+      if (window.confirm("Deseja desconectar da sua conta?")) {
+        await performSignOut();
+      }
+      return;
+    }
+
     Alert.alert("Sair", "Deseja desconectar da sua conta?", [
       { text: "Cancelar", style: "cancel" },
-      {
-        text: "Sair",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await signOut();
-          } finally {
-            qc.clear();
-            router.replace("/(auth)/login");
-          }
-        },
-      },
+      { text: "Sair", style: "destructive", onPress: performSignOut },
     ]);
   }
 
@@ -296,11 +302,8 @@ export default function ConfiguracoesScreen() {
       className="flex-1 bg-surface-900"
       contentContainerClassName="px-4 pt-6 pb-10"
     >
-      <View className="flex-row items-center gap-3 mb-6">
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text className="text-brand-400 text-base">← Voltar</Text>
-        </TouchableOpacity>
-        <Text className="text-white text-2xl font-bold">Configurações</Text>
+      <View className="mb-6">
+        <Text className="text-white text-3xl font-bold tracking-tight">Configurações</Text>
       </View>
 
       {/* ── Segurança ─── */}
