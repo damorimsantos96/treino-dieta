@@ -202,6 +202,15 @@ export interface WaterIntake {
   preset?: WaterPreset | null;
 }
 
+export type ActivityKey =
+  | "crossfit"
+  | "musculacao"
+  | "boxe"
+  | "surf"
+  | "ciclismo"
+  | "corrida"
+  | "outros";
+
 export interface SyncCandidate {
   id: string;
   date: string;
@@ -211,6 +220,7 @@ export interface SyncCandidate {
   distance_km?: number | null;
   kcal?: number | null;
   avg_hr?: number | null;
+  mapping_key?: ActivityKey;
   already_imported: boolean;
   raw?: unknown;
 }

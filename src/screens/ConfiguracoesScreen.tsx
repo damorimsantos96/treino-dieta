@@ -25,10 +25,20 @@ import {
   requestHealthConnectPermissions,
   syncHealthConnectWeights,
 } from "@/lib/healthConnect";
-import { SyncCandidate } from "@/types";
+import { ActivityKey, SyncCandidate } from "@/types";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 
 type SyncState = "idle" | "loading" | "success" | "error";
+
+const ACTIVITY_OPTIONS: { key: ActivityKey; label: string }[] = [
+  { key: "musculacao", label: "Musculação" },
+  { key: "crossfit", label: "CrossFit" },
+  { key: "boxe", label: "Boxe" },
+  { key: "surf", label: "Surf" },
+  { key: "ciclismo", label: "Ciclismo" },
+  { key: "corrida", label: "Corrida" },
+  { key: "outros", label: "Outros" },
+];
 
 function SectionTitle({ title }: { title: string }) {
   return (
@@ -126,6 +136,7 @@ export default function ConfiguracoesScreen() {
   const [syncProvider, setSyncProvider] = useState<"whoop" | "garmin" | null>(null);
   const [candidates, setCandidates] = useState<SyncCandidate[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [activityOverrides, setActivityOverrides] = useState<Record<string, ActivityKey>>({});
   const [profileSaved, setProfileSaved] = useState(false);
   const [healthConnectBusy, setHealthConnectBusy] = useState<"idle" | "permissions" | "sync" | "save">("idle");
   const [profileForm, setProfileForm] = useState({
@@ -175,11 +186,12 @@ export default function ConfiguracoesScreen() {
 
   async function callSyncFunction(
     provider: "whoop" | "garmin",
-    mode: "list" | "import",
-    ids: string[] = []
+    mode: "list" | "import" | "reclassify",
+    ids: string[] = [],
+    overrides: Record<string, ActivityKey> = {}
   ) {
     const { data, error } = await supabase.functions.invoke(`sync-${provider}`, {
-      body: { mode, ids },
+      body: { mode, ids, overrides },
     });
     if (error) {
       throw new Error(await extractFunctionError(error));
@@ -188,6 +200,28 @@ export default function ConfiguracoesScreen() {
       throw new Error(formatFunctionErrorPayload(data));
     }
     return data;
+  }
+
+  async function reclassifyWorkout(provider: "whoop" | "garmin", id: string, key: ActivityKey) {
+    const setState = provider === "whoop" ? setWhoopSync : setGarminSync;
+    setState("loading");
+    try {
+      const data = await callSyncFunction(provider, "reclassify", [id], { [id]: key });
+      setState("success");
+      Alert.alert(provider === "whoop" ? "Whoop" : "Garmin", data.message);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["daily_log"] }),
+        qc.invalidateQueries({ queryKey: ["daily_logs"] }),
+      ]);
+      // Refresh the candidates list with the updated state
+      const refreshed = await callSyncFunction(provider, "list");
+      setCandidates((refreshed.candidates ?? []) as SyncCandidate[]);
+    } catch (err: any) {
+      setState("error");
+      Alert.alert("Erro", err.message);
+    } finally {
+      setTimeout(() => setState("idle"), 3000);
+    }
   }
 
   async function previewSync(provider: "whoop" | "garmin") {
@@ -204,6 +238,7 @@ export default function ConfiguracoesScreen() {
       const list = (data.candidates ?? []) as SyncCandidate[];
       setCandidates(list);
       setSelectedIds(new Set());
+      setActivityOverrides({});
       setSyncProvider(provider);
       setState("success");
     } catch (err: any) {
@@ -250,11 +285,12 @@ export default function ConfiguracoesScreen() {
     const setState = provider === "whoop" ? setWhoopSync : setGarminSync;
     setState("loading");
     try {
-      const data = await callSyncFunction(provider, "import", ids);
+      const data = await callSyncFunction(provider, "import", ids, activityOverrides);
       setState("success");
       setSyncProvider(null);
       setCandidates([]);
       setSelectedIds(new Set());
+      setActivityOverrides({});
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["daily_log"] }),
         qc.invalidateQueries({ queryKey: ["daily_logs"] }),
@@ -728,7 +764,7 @@ export default function ConfiguracoesScreen() {
 
     <BottomSheetModal
       visible={!!syncProvider}
-      onClose={() => setSyncProvider(null)}
+      onClose={() => { setSyncProvider(null); setActivityOverrides({}); }}
       scroll
       maxHeight="82%"
     >
@@ -770,18 +806,11 @@ export default function ConfiguracoesScreen() {
             ) : (
               candidates.map((candidate) => {
                 const selected = selectedIds.has(candidate.id);
+                const isOutros = candidate.mapping_key === "outros";
+                const overrideKey = activityOverrides[candidate.id];
                 return (
-                  <TouchableOpacity
+                  <View
                     key={candidate.id}
-                    disabled={candidate.already_imported}
-                    onPress={() => {
-                      setSelectedIds((current) => {
-                        const next = new Set(current);
-                        if (next.has(candidate.id)) next.delete(candidate.id);
-                        else next.add(candidate.id);
-                        return next;
-                      });
-                    }}
                     className={`rounded-2xl px-4 py-3 mb-2 border ${
                       candidate.already_imported
                         ? "bg-surface-700/40 border-surface-700"
@@ -790,33 +819,119 @@ export default function ConfiguracoesScreen() {
                         : "bg-surface-700/50 border-surface-700"
                     }`}
                   >
-                    <View className="flex-row items-start gap-3">
-                      <View
-                        className={`w-5 h-5 rounded-md border-2 items-center justify-center mt-0.5 ${
-                          selected || candidate.already_imported
-                            ? "bg-brand-500 border-brand-600"
-                            : "border-surface-600"
-                        }`}
-                      >
-                        {(selected || candidate.already_imported) && (
-                          <Text className="text-white text-xs font-bold">✓</Text>
-                        )}
-                      </View>
-                      <View className="flex-1">
-                        <View className="flex-row items-center gap-2">
-                          <Text className="text-white text-sm font-bold flex-1">
-                            {candidate.name}
-                          </Text>
-                          {candidate.already_imported && (
-                            <Text className="text-brand-400 text-xs font-semibold">Importado</Text>
+                    <TouchableOpacity
+                      disabled={candidate.already_imported}
+                      onPress={() => {
+                        setSelectedIds((current) => {
+                          const next = new Set(current);
+                          if (next.has(candidate.id)) next.delete(candidate.id);
+                          else next.add(candidate.id);
+                          return next;
+                        });
+                      }}
+                    >
+                      <View className="flex-row items-start gap-3">
+                        <View
+                          className={`w-5 h-5 rounded-md border-2 items-center justify-center mt-0.5 ${
+                            selected || candidate.already_imported
+                              ? "bg-brand-500 border-brand-600"
+                              : "border-surface-600"
+                          }`}
+                        >
+                          {(selected || candidate.already_imported) && (
+                            <Text className="text-white text-xs font-bold">✓</Text>
                           )}
                         </View>
-                        <Text className="text-surface-500 text-xs mt-1">
-                          {formatCandidateMeta(candidate)}
-                        </Text>
+                        <View className="flex-1">
+                          <View className="flex-row items-center gap-2">
+                            <Text className="text-white text-sm font-bold flex-1">
+                              {candidate.name}
+                            </Text>
+                            {candidate.already_imported && !isOutros && (
+                              <Text className="text-brand-400 text-xs font-semibold">Importado</Text>
+                            )}
+                            {candidate.already_imported && isOutros && syncProvider === "whoop" && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  const key = activityOverrides[candidate.id];
+                                  if (!key || key === "outros") {
+                                    Alert.alert(
+                                      "Selecione o tipo",
+                                      "Escolha uma atividade abaixo antes de reclassificar."
+                                    );
+                                    return;
+                                  }
+                                  Alert.alert(
+                                    "Reclassificar atividade",
+                                    `Mover para "${ACTIVITY_OPTIONS.find(o => o.key === key)?.label}"?`,
+                                    [
+                                      { text: "Cancelar", style: "cancel" },
+                                      {
+                                        text: "Reclassificar",
+                                        onPress: () => reclassifyWorkout("whoop", candidate.id, key),
+                                      },
+                                    ]
+                                  );
+                                }}
+                                className="bg-amber-500/15 border border-amber-500/30 rounded-lg px-2 py-1"
+                              >
+                                <Text className="text-amber-300 text-xs font-semibold">Reclassificar</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                          <Text className="text-surface-500 text-xs mt-1">
+                            {formatCandidateMeta(candidate)}
+                          </Text>
+                        </View>
                       </View>
-                    </View>
-                  </TouchableOpacity>
+                    </TouchableOpacity>
+
+                    {isOutros && syncProvider === "whoop" && (
+                      <View className="mt-2.5 pt-2.5 border-t border-surface-700/60 gap-2">
+                        <Text className="text-surface-500 text-xs font-semibold uppercase tracking-wider">
+                          Tipo de atividade
+                        </Text>
+                        <View className="flex-row flex-wrap gap-1.5">
+                          {ACTIVITY_OPTIONS.map((option) => {
+                            const isSelected = (overrideKey ?? "outros") === option.key;
+                            return (
+                              <TouchableOpacity
+                                key={option.key}
+                                onPress={() =>
+                                  setActivityOverrides((prev) => ({
+                                    ...prev,
+                                    [candidate.id]: option.key,
+                                  }))
+                                }
+                                className={`rounded-xl px-3 py-1.5 border ${
+                                  isSelected
+                                    ? option.key === "outros"
+                                      ? "bg-surface-600 border-surface-500"
+                                      : "bg-brand-500 border-brand-600"
+                                    : "bg-surface-700/60 border-surface-600/40"
+                                }`}
+                              >
+                                <Text
+                                  className={`text-xs font-semibold ${
+                                    isSelected && option.key !== "outros"
+                                      ? "text-white"
+                                      : "text-surface-400"
+                                  }`}
+                                >
+                                  {option.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                        {!candidate.already_imported && (!overrideKey || overrideKey === "outros") && (
+                          <Text className="text-amber-400/70 text-xs">
+                            Selecione o tipo para evitar que fique em "Outros".
+                          </Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
                 );
               })
             )}
