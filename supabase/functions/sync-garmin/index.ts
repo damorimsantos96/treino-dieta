@@ -40,16 +40,19 @@ const GARMIN_WEB_HEADERS = {
 
 type GarminEndpointAuth = "bearer" | "cookies";
 type GarminOAuthConsumer = { key: string; secret: string };
+type GarminBearerToken = {
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: string | null;
+};
 type GarminSession = {
   cookies: string;
   bearerToken: string | null;
   bearerExpiresAt?: string | null;
+  refreshToken?: string | null;
   authMode: "oauth" | "cookies";
   oauthFailure?: Record<string, unknown>;
-};
-type GarminBearerToken = {
-  accessToken: string;
-  expiresAt: string | null;
+  fromCache?: boolean;
 };
 
 const CORS = {
@@ -137,6 +140,21 @@ function dbError(stage: string, error: unknown): SyncError {
     stage,
     message: error instanceof Error ? error.message : String(error),
   });
+}
+
+function isGarminRateLimitError(error: unknown): boolean {
+  return error instanceof SyncError && (error.status === 429 || error.code === "GARMIN_RATE_LIMITED");
+}
+
+function isGarminSessionRejected(error: unknown): boolean {
+  if (!(error instanceof SyncError)) return false;
+  const attempts = Array.isArray(error.details?.attempts) ? error.details.attempts : [];
+  return attempts.some((attempt: any) =>
+    attempt?.status === 401 ||
+    attempt?.status === 403 ||
+    attempt?.reason === "missing_bearer_token" ||
+    attempt?.reason === "missing_cookies"
+  );
 }
 
 async function responseSnippet(res: Response): Promise<string | null> {
@@ -278,7 +296,7 @@ async function safeJson(req: Request) {
 async function getCachedGarminSession(supabaseAdmin: any, userId: string): Promise<GarminSession | null> {
   const { data: tokenRow, error } = await supabaseAdmin
     .from("integration_tokens")
-    .select("access_token, expires_at, metadata")
+    .select("access_token, refresh_token, expires_at, metadata")
     .eq("user_id", userId)
     .eq("provider", GARMIN_SESSION_PROVIDER)
     .maybeSingle();
@@ -286,6 +304,7 @@ async function getCachedGarminSession(supabaseAdmin: any, userId: string): Promi
 
   const metadata = tokenRow?.metadata ?? {};
   const bearerToken = typeof tokenRow?.access_token === "string" ? tokenRow.access_token.trim() : "";
+  const refreshToken = typeof tokenRow?.refresh_token === "string" ? tokenRow.refresh_token.trim() : "";
   const bearerExpiresAt = tokenRow?.expires_at ? new Date(tokenRow.expires_at).getTime() : 0;
   const bearerValid = Boolean(
     bearerToken &&
@@ -304,7 +323,9 @@ async function getCachedGarminSession(supabaseAdmin: any, userId: string): Promi
     cookies: cookiesValid ? cookies : "",
     bearerToken: bearerValid ? bearerToken : null,
     bearerExpiresAt: bearerValid ? tokenRow.expires_at : null,
+    refreshToken: refreshToken || null,
     authMode: bearerValid ? "oauth" : "cookies",
+    fromCache: true,
   };
 }
 
@@ -327,13 +348,14 @@ async function saveCachedGarminSession(
       user_id: userId,
       provider: GARMIN_SESSION_PROVIDER,
       access_token: session.bearerToken,
-      refresh_token: null,
+      refresh_token: session.refreshToken ?? null,
       expires_at: expiresAt,
       metadata: {
         auth_mode: session.authMode,
         cookies: session.cookies || null,
         cookies_expires_at: cookiesExpiresAt,
         oauth_failure: session.oauthFailure ?? null,
+        cached_by: "sync-garmin",
         saved_at: new Date(now).toISOString(),
       },
     }, { onConflict: "user_id,provider" });
@@ -347,16 +369,6 @@ async function clearCachedGarminSession(supabaseAdmin: any, userId: string) {
     .eq("user_id", userId)
     .eq("provider", GARMIN_SESSION_PROVIDER);
   if (error) throw dbError("garmin_session_delete", error);
-}
-
-function isGarminSessionRejected(error: unknown): boolean {
-  if (!(error instanceof SyncError)) return false;
-  const attempts = Array.isArray(error.details?.attempts) ? error.details.attempts : [];
-  return attempts.some((attempt: any) =>
-    attempt?.status === 401 ||
-    attempt?.status === 403 ||
-    attempt?.reason === "missing_bearer_token"
-  );
 }
 
 async function toCandidates(supabaseAdmin: any, userId: string, activities: any[]) {
@@ -541,6 +553,7 @@ async function garminLogin(email: string, password: string): Promise<GarminSessi
       if (session.bearerToken) return session;
       cookieFallback ??= session;
     } catch (error) {
+      if (isGarminRateLimitError(error)) throw error;
       failures.push(errorDetailsForLog(error));
     }
   }
@@ -795,6 +808,7 @@ async function redeemGarminTicket(ticket: string, cookies: string): Promise<Garm
   try {
     bearer = await fetchGarminBearerToken(ticket);
   } catch (error) {
+    if (isGarminRateLimitError(error)) throw error;
     oauthFailure = errorDetailsForLog(error);
     console.warn("Garmin OAuth token exchange failed", JSON.stringify(oauthFailure));
   }
@@ -827,6 +841,7 @@ async function redeemGarminTicket(ticket: string, cookies: string): Promise<Garm
     cookies: allCookies,
     bearerToken: bearer?.accessToken ?? null,
     bearerExpiresAt: bearer?.expiresAt ?? null,
+    refreshToken: bearer?.refreshToken ?? null,
     authMode: bearer?.accessToken ? "oauth" : "cookies",
     oauthFailure,
   };
@@ -849,6 +864,19 @@ async function fetchGarminBearerToken(ticket: string): Promise<GarminBearerToken
   });
   const preauthorizedText = await preauthorizedRes.text();
   if (!preauthorizedRes.ok) {
+    if (preauthorizedRes.status === 429) {
+      throw new SyncError(
+        429,
+        "GARMIN_RATE_LIMITED",
+        "Garmin limitou novas tentativas de sincronizacao. Aguarde alguns minutos antes de tentar novamente.",
+        {
+          endpoint: "oauth_preauthorized",
+          status: preauthorizedRes.status,
+          retryAfter: preauthorizedRes.headers.get("retry-after"),
+          body: preauthorizedText.slice(0, 300),
+        }
+      );
+    }
     throw new SyncError(424, "GARMIN_OAUTH_PREAUTHORIZED_FAILED", "Garmin recusou a troca do ticket por token OAuth.", {
       status: preauthorizedRes.status,
       body: preauthorizedText.slice(0, 300),
@@ -878,6 +906,19 @@ async function fetchGarminBearerToken(ticket: string): Promise<GarminBearerToken
   });
   const exchangeText = await exchangeRes.text();
   if (!exchangeRes.ok) {
+    if (exchangeRes.status === 429) {
+      throw new SyncError(
+        429,
+        "GARMIN_RATE_LIMITED",
+        "Garmin limitou novas tentativas de sincronizacao. Aguarde alguns minutos antes de tentar novamente.",
+        {
+          endpoint: "oauth_exchange",
+          status: exchangeRes.status,
+          retryAfter: exchangeRes.headers.get("retry-after"),
+          body: exchangeText.slice(0, 300),
+        }
+      );
+    }
     throw new SyncError(424, "GARMIN_OAUTH_EXCHANGE_FAILED", "Garmin recusou a troca para bearer token.", {
       status: exchangeRes.status,
       body: exchangeText.slice(0, 300),
@@ -907,6 +948,7 @@ async function fetchGarminBearerToken(ticket: string): Promise<GarminBearerToken
 
   return {
     accessToken: String(accessToken),
+    refreshToken: exchangeData.refresh_token ? String(exchangeData.refresh_token) : null,
     expiresAt,
   };
 }
@@ -1045,7 +1087,7 @@ async function fetchGarminActivities(session: GarminSession, limit: number) {
       failures.push({
         url: endpoint.url,
         auth: endpoint.auth,
-        reason: "missing_bearer_token",
+        reason: endpoint.auth === "bearer" ? "missing_bearer_token" : "missing_cookies",
         oauthFailure: session.oauthFailure,
       });
       continue;
@@ -1057,6 +1099,19 @@ async function fetchGarminActivities(session: GarminSession, limit: number) {
     });
     const text = await res.text();
     if (!res.ok) {
+      if (res.status === 429) {
+        throw new SyncError(
+          429,
+          "GARMIN_RATE_LIMITED",
+          "Garmin limitou novas tentativas de sincronizacao. Aguarde alguns minutos antes de tentar novamente.",
+          {
+            endpoint: endpoint.url,
+            auth: endpoint.auth,
+            retryAfter: res.headers.get("retry-after"),
+            body: text.slice(0, 300),
+          }
+        );
+      }
       failures.push({
         url: endpoint.url,
         auth: endpoint.auth,
@@ -1123,6 +1178,18 @@ async function fetchGarminLaps(session: GarminSession, activityIdValue: string) 
 
     const res = await fetch(endpoint.url, { headers });
     if (!res.ok) {
+      if (res.status === 429) {
+        throw new SyncError(
+          429,
+          "GARMIN_RATE_LIMITED",
+          "Garmin limitou novas tentativas de sincronizacao. Aguarde alguns minutos antes de tentar novamente.",
+          {
+            endpoint: endpoint.url,
+            auth: endpoint.auth,
+            retryAfter: res.headers.get("retry-after"),
+          }
+        );
+      }
       if (res.status === 401 || res.status === 403) authFailureStatus = res.status;
       continue;
     }
