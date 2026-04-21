@@ -3,7 +3,7 @@
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS user_app_settings (
-  id                               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                          UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
   water_start_time                 TEXT NOT NULL DEFAULT '07:00',
   water_end_time                   TEXT NOT NULL DEFAULT '22:00',
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS user_app_settings (
 );
 
 CREATE TABLE IF NOT EXISTS water_presets (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   label         TEXT NOT NULL,
   amount_ml     INTEGER NOT NULL,
@@ -38,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_water_presets_user_sort
   ON water_presets (user_id, sort_order, created_at);
 
 CREATE TABLE IF NOT EXISTS water_intakes (
-  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   logged_date   DATE NOT NULL,
   occurred_at   TIMESTAMPTZ NOT NULL,
