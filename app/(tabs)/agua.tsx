@@ -94,6 +94,7 @@ export default function AguaScreen() {
     amount: "",
   });
   const [confirmDeletePreset, setConfirmDeletePreset] = useState(false);
+  const [confirmDeleteIntakeId, setConfirmDeleteIntakeId] = useState<string | null>(null);
   const [manualAmount, setManualAmount] = useState("");
 
   const { data: settings } = useQuery({
@@ -206,6 +207,20 @@ export default function AguaScreen() {
 
   const isLoading = loadingPresets || loadingIntakes || loadingLog;
   const dateLabel = format(today, "EEEE, d 'de' MMMM", { locale: ptBR });
+
+  async function movePreset(presetId: string, direction: "up" | "down") {
+    const idx = presets.findIndex((p) => p.id === presetId);
+    if (idx === -1) return;
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= presets.length) return;
+
+    const a = presets[idx];
+    const b = presets[swapIdx];
+    await Promise.all([
+      savePreset({ id: a.id, label: a.label, amount_ml: a.amount_ml, sort_order: swapIdx }),
+      savePreset({ id: b.id, label: b.label, amount_ml: b.amount_ml, sort_order: idx }),
+    ]);
+  }
 
   async function handleQuickAdd(amountMl: number, presetId?: string) {
     await addIntake({
@@ -428,37 +443,53 @@ export default function AguaScreen() {
               Nenhum consumo registrado ainda hoje.
             </Text>
           ) : (
-            intakes.map((intake) => (
-              <View
-                key={intake.id}
-                className="flex-row items-center justify-between py-2.5 border-b border-surface-700/40"
-              >
-                <View className="gap-0.5">
-                  <Text className="text-white text-sm font-semibold">
-                    {formatWater(intake.amount_ml)}
-                  </Text>
-                  <Text className="text-surface-500 text-xs">
-                    {format(new Date(intake.occurred_at), "HH:mm")}
-                    {intake.preset?.label ? ` · ${intake.preset.label}` : ""}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() =>
-                    Alert.alert("Remover consumo?", "Esta entrada sera excluida.", [
-                      { text: "Cancelar", style: "cancel" },
-                      {
-                        text: "Remover",
-                        style: "destructive",
-                        onPress: () => removeIntake(intake.id),
-                      },
-                    ])
-                  }
-                  className="p-2"
+            intakes.map((intake) => {
+              const confirming = confirmDeleteIntakeId === intake.id;
+              return (
+                <View
+                  key={intake.id}
+                  className="py-2.5 border-b border-surface-700/40"
                 >
-                  <Ionicons name="trash-outline" size={16} color="#f87171" />
-                </TouchableOpacity>
-              </View>
-            ))
+                  <View className="flex-row items-center justify-between">
+                    <View className="gap-0.5 flex-1">
+                      <Text className="text-white text-sm font-semibold">
+                        {formatWater(intake.amount_ml)}
+                      </Text>
+                      <Text className="text-surface-500 text-xs">
+                        {format(new Date(intake.occurred_at), "HH:mm")}
+                        {intake.preset?.label ? ` · ${intake.preset.label}` : ""}
+                      </Text>
+                    </View>
+                    {confirming ? (
+                      <View className="flex-row gap-2">
+                        <TouchableOpacity
+                          onPress={() => setConfirmDeleteIntakeId(null)}
+                          className="bg-surface-700 border border-surface-600/40 rounded-xl px-3 py-1.5"
+                        >
+                          <Text className="text-white text-xs font-semibold">Cancelar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setConfirmDeleteIntakeId(null);
+                            removeIntake(intake.id);
+                          }}
+                          className="bg-red-500 rounded-xl px-3 py-1.5"
+                        >
+                          <Text className="text-white text-xs font-bold">Remover</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={() => setConfirmDeleteIntakeId(intake.id)}
+                        className="p-2"
+                      >
+                        <Ionicons name="trash-outline" size={16} color="#f87171" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              );
+            })
           )}
         </Card>
       </ScrollView>
@@ -527,22 +558,50 @@ export default function AguaScreen() {
             <Text className="text-surface-500 text-xs font-semibold uppercase tracking-wider">
               Quantidades salvas
             </Text>
-            {presets.map((preset) => (
-              <TouchableOpacity
+            {presets.map((preset, index) => (
+              <View
                 key={preset.id}
-                onPress={() => {
-                  setConfirmDeletePreset(false);
-                  setPresetForm({
-                    id: preset.id,
-                    label: preset.label,
-                    amount: String(preset.amount_ml),
-                  });
-                }}
-                className="flex-row items-center justify-between py-2.5 border-b border-surface-700/40"
+                className="flex-row items-center gap-1 border-b border-surface-700/40"
               >
-                <Text className="text-white text-sm font-semibold">{preset.label}</Text>
-                <Text className="text-surface-500 text-xs">{formatWater(preset.amount_ml)}</Text>
-              </TouchableOpacity>
+                <View className="items-center gap-0.5 pr-1">
+                  <TouchableOpacity
+                    disabled={index === 0 || savingPreset}
+                    onPress={() => movePreset(preset.id, "up")}
+                    className="p-1"
+                  >
+                    <Ionicons
+                      name="chevron-up"
+                      size={14}
+                      color={index === 0 ? "#2c2d36" : "#72737f"}
+                    />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled={index === presets.length - 1 || savingPreset}
+                    onPress={() => movePreset(preset.id, "down")}
+                    className="p-1"
+                  >
+                    <Ionicons
+                      name="chevron-down"
+                      size={14}
+                      color={index === presets.length - 1 ? "#2c2d36" : "#72737f"}
+                    />
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setConfirmDeletePreset(false);
+                    setPresetForm({
+                      id: preset.id,
+                      label: preset.label,
+                      amount: String(preset.amount_ml),
+                    });
+                  }}
+                  className="flex-1 flex-row items-center justify-between py-2.5"
+                >
+                  <Text className="text-white text-sm font-semibold">{preset.label}</Text>
+                  <Text className="text-surface-500 text-xs">{formatWater(preset.amount_ml)}</Text>
+                </TouchableOpacity>
+              </View>
             ))}
           </View>
         )}
