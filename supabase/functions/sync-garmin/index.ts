@@ -12,8 +12,8 @@ const GARMIN_SSO_URL = "https://sso.garmin.com/sso";
 const GARMIN_CONNECT_API_URL = "https://connectapi.garmin.com";
 const GARMIN_MOBILE_USER_AGENT = "GCM-iOS-5.7.2.1";
 const GARMIN_SESSION_PROVIDER = "garmin";
-const GARMIN_BEARER_DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
-const GARMIN_COOKIE_TTL_MS = 6 * 60 * 60 * 1000;
+const GARMIN_BEARER_DEFAULT_TTL_MS = 23 * 60 * 60 * 1000;
+const GARMIN_COOKIE_TTL_MS = 11 * 60 * 60 * 1000;
 const GARMIN_TOKEN_REFRESH_SKEW_MS = 10 * 60 * 1000;
 const GARMIN_PUBLIC_OAUTH_CONSUMER: GarminOAuthConsumer = {
   key: "fc3e99d2-118c-44b8-8ae3-03370dde24c0",
@@ -73,13 +73,15 @@ class SyncError extends Error {
   status: number;
   code: string;
   details: Record<string, unknown>;
+  retryAfterMs?: number;
 
-  constructor(status: number, code: string, message: string, details: Record<string, unknown> = {}) {
+  constructor(status: number, code: string, message: string, details: Record<string, unknown> = {}, retryAfterMs?: number) {
     super(message);
     this.name = "SyncError";
     this.status = status;
     this.code = code;
     this.details = details;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -144,6 +146,33 @@ function dbError(stage: string, error: unknown): SyncError {
 
 function isGarminRateLimitError(error: unknown): boolean {
   return error instanceof SyncError && (error.status === 429 || error.code === "GARMIN_RATE_LIMITED");
+}
+
+const RETRY_BASE_MS = 2_000;
+const RETRY_CAP_MS = 10_000;
+const RETRY_MAX_ATTEMPTS = 3;
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  opts: { maxAttempts?: number; isRetryable?: (e: unknown) => boolean } = {}
+): Promise<T> {
+  const maxAttempts = opts.maxAttempts ?? RETRY_MAX_ATTEMPTS;
+  const isRetryable = opts.isRetryable ?? isGarminRateLimitError;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (!isRetryable(err) || attempt === maxAttempts - 1) throw err;
+      const retryAfterMs = err instanceof SyncError ? err.retryAfterMs : undefined;
+      const ceiling = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** attempt);
+      const delay = retryAfterMs ?? Math.random() * ceiling;
+      console.warn(`[sync-garmin] Rate limited, aguardando ${Math.round(delay)}ms (tentativa ${attempt + 1}/${maxAttempts})`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
 }
 
 function isGarminSessionRejected(error: unknown): boolean {
@@ -214,9 +243,9 @@ Deno.serve(async (req) => {
     let usedCachedSession = Boolean(garminSession);
     if (!garminSession) {
       stage = "garmin_login";
-      garminSession = await garminLogin(
-        requireEnv("GARMIN_EMAIL"),
-        requireEnv("GARMIN_PASSWORD")
+      garminSession = await withRetry(
+        () => garminLogin(requireEnv("GARMIN_EMAIL"), requireEnv("GARMIN_PASSWORD")),
+        { isRetryable: isGarminRateLimitError }
       );
       await saveCachedGarminSession(supabaseAdmin, user.id, garminSession);
     }
@@ -230,9 +259,9 @@ Deno.serve(async (req) => {
 
       await clearCachedGarminSession(supabaseAdmin, user.id);
       stage = "garmin_login";
-      garminSession = await garminLogin(
-        requireEnv("GARMIN_EMAIL"),
-        requireEnv("GARMIN_PASSWORD")
+      garminSession = await withRetry(
+        () => garminLogin(requireEnv("GARMIN_EMAIL"), requireEnv("GARMIN_PASSWORD")),
+        { isRetryable: isGarminRateLimitError }
       );
       usedCachedSession = false;
       await saveCachedGarminSession(supabaseAdmin, user.id, garminSession);
@@ -806,7 +835,7 @@ async function redeemGarminTicket(ticket: string, cookies: string): Promise<Garm
   let bearer: GarminBearerToken | null = null;
   let oauthFailure: Record<string, unknown> | undefined;
   try {
-    bearer = await fetchGarminBearerToken(ticket);
+    bearer = await withRetry(() => fetchGarminBearerToken(ticket));
   } catch (error) {
     if (isGarminRateLimitError(error)) throw error;
     oauthFailure = errorDetailsForLog(error);
@@ -865,6 +894,8 @@ async function fetchGarminBearerToken(ticket: string): Promise<GarminBearerToken
   const preauthorizedText = await preauthorizedRes.text();
   if (!preauthorizedRes.ok) {
     if (preauthorizedRes.status === 429) {
+      const retryAfterRaw = preauthorizedRes.headers.get("retry-after");
+      const retryAfterMs = retryAfterRaw ? parseFloat(retryAfterRaw) * 1000 : undefined;
       throw new SyncError(
         429,
         "GARMIN_RATE_LIMITED",
@@ -872,9 +903,10 @@ async function fetchGarminBearerToken(ticket: string): Promise<GarminBearerToken
         {
           endpoint: "oauth_preauthorized",
           status: preauthorizedRes.status,
-          retryAfter: preauthorizedRes.headers.get("retry-after"),
+          retryAfter: retryAfterRaw,
           body: preauthorizedText.slice(0, 300),
-        }
+        },
+        retryAfterMs
       );
     }
     throw new SyncError(424, "GARMIN_OAUTH_PREAUTHORIZED_FAILED", "Garmin recusou a troca do ticket por token OAuth.", {
@@ -907,6 +939,8 @@ async function fetchGarminBearerToken(ticket: string): Promise<GarminBearerToken
   const exchangeText = await exchangeRes.text();
   if (!exchangeRes.ok) {
     if (exchangeRes.status === 429) {
+      const retryAfterRaw = exchangeRes.headers.get("retry-after");
+      const retryAfterMs = retryAfterRaw ? parseFloat(retryAfterRaw) * 1000 : undefined;
       throw new SyncError(
         429,
         "GARMIN_RATE_LIMITED",
@@ -914,9 +948,10 @@ async function fetchGarminBearerToken(ticket: string): Promise<GarminBearerToken
         {
           endpoint: "oauth_exchange",
           status: exchangeRes.status,
-          retryAfter: exchangeRes.headers.get("retry-after"),
+          retryAfter: retryAfterRaw,
           body: exchangeText.slice(0, 300),
-        }
+        },
+        retryAfterMs
       );
     }
     throw new SyncError(424, "GARMIN_OAUTH_EXCHANGE_FAILED", "Garmin recusou a troca para bearer token.", {
@@ -1100,6 +1135,8 @@ async function fetchGarminActivities(session: GarminSession, limit: number) {
     const text = await res.text();
     if (!res.ok) {
       if (res.status === 429) {
+        const retryAfterRaw = res.headers.get("retry-after");
+        const retryAfterMs = retryAfterRaw ? parseFloat(retryAfterRaw) * 1000 : undefined;
         throw new SyncError(
           429,
           "GARMIN_RATE_LIMITED",
@@ -1107,9 +1144,10 @@ async function fetchGarminActivities(session: GarminSession, limit: number) {
           {
             endpoint: endpoint.url,
             auth: endpoint.auth,
-            retryAfter: res.headers.get("retry-after"),
+            retryAfter: retryAfterRaw,
             body: text.slice(0, 300),
-          }
+          },
+          retryAfterMs
         );
       }
       failures.push({
@@ -1179,6 +1217,8 @@ async function fetchGarminLaps(session: GarminSession, activityIdValue: string) 
     const res = await fetch(endpoint.url, { headers });
     if (!res.ok) {
       if (res.status === 429) {
+        const retryAfterRaw = res.headers.get("retry-after");
+        const retryAfterMs = retryAfterRaw ? parseFloat(retryAfterRaw) * 1000 : undefined;
         throw new SyncError(
           429,
           "GARMIN_RATE_LIMITED",
@@ -1186,8 +1226,9 @@ async function fetchGarminLaps(session: GarminSession, activityIdValue: string) 
           {
             endpoint: endpoint.url,
             auth: endpoint.auth,
-            retryAfter: res.headers.get("retry-after"),
-          }
+            retryAfter: retryAfterRaw,
+          },
+          retryAfterMs
         );
       }
       if (res.status === 401 || res.status === 403) authFailureStatus = res.status;
