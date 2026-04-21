@@ -93,6 +93,7 @@ export default function AguaScreen() {
     label: "",
     amount: "",
   });
+  const [confirmDeletePreset, setConfirmDeletePreset] = useState(false);
   const [manualAmount, setManualAmount] = useState("");
 
   const { data: settings } = useQuery({
@@ -462,7 +463,7 @@ export default function AguaScreen() {
         </Card>
       </ScrollView>
 
-      <BottomSheetModal visible={presetOpen} onClose={() => setPresetOpen(false)}>
+      <BottomSheetModal visible={presetOpen} onClose={() => { setPresetOpen(false); setConfirmDeletePreset(false); }}>
         <Text className="text-white text-xl font-bold">
           {presetForm.id ? "Editar quantidade" : "Nova quantidade"}
         </Text>
@@ -487,26 +488,39 @@ export default function AguaScreen() {
             keyboardType="number-pad"
           />
         </View>
-        {presetForm.id && (
+        {presetForm.id && !confirmDeletePreset && (
           <TouchableOpacity
-            onPress={() =>
-              Alert.alert("Excluir quantidade?", "Este preset sera removido.", [
-                { text: "Cancelar", style: "cancel" },
-                {
-                  text: "Excluir",
-                  style: "destructive",
-                  onPress: async () => {
-                    await removePreset(presetForm.id!);
-                    setPresetOpen(false);
-                    setPresetForm({ label: "", amount: "" });
-                  },
-                },
-              ])
-            }
+            onPress={() => setConfirmDeletePreset(true)}
             className="bg-red-500/10 border border-red-500/20 rounded-xl py-3 items-center"
           >
             <Text className="text-red-300 font-semibold">Excluir preset</Text>
           </TouchableOpacity>
+        )}
+        {presetForm.id && confirmDeletePreset && (
+          <View className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 gap-2">
+            <Text className="text-red-300 text-sm font-semibold text-center">
+              Excluir "{presetForm.label}"?
+            </Text>
+            <View className="flex-row gap-2">
+              <TouchableOpacity
+                onPress={() => setConfirmDeletePreset(false)}
+                className="flex-1 bg-surface-700 border border-surface-600/40 rounded-xl py-2.5 items-center"
+              >
+                <Text className="text-white text-sm font-semibold">Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  await removePreset(presetForm.id!);
+                  setConfirmDeletePreset(false);
+                  setPresetOpen(false);
+                  setPresetForm({ label: "", amount: "" });
+                }}
+                className="flex-1 bg-red-500 rounded-xl py-2.5 items-center"
+              >
+                <Text className="text-white text-sm font-bold">Excluir</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         )}
         {presets.length > 0 && (
           <View className="gap-2">
@@ -516,13 +530,14 @@ export default function AguaScreen() {
             {presets.map((preset) => (
               <TouchableOpacity
                 key={preset.id}
-                onPress={() =>
+                onPress={() => {
+                  setConfirmDeletePreset(false);
                   setPresetForm({
                     id: preset.id,
                     label: preset.label,
                     amount: String(preset.amount_ml),
-                  })
-                }
+                  });
+                }}
                 className="flex-row items-center justify-between py-2.5 border-b border-surface-700/40"
               >
                 <Text className="text-white text-sm font-semibold">{preset.label}</Text>
