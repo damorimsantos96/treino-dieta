@@ -7,6 +7,7 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  useWindowDimensions,
 } from "react-native";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
@@ -15,6 +16,7 @@ import { getPRMovements, getPRAttempts, createPRMovement, createPRAttempt, recal
 import { PRMovement, PRAttempt, PRUnit } from "@/types";
 import { Ionicons } from "@expo/vector-icons";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
+import { ChartTooltip } from "@/components/ui/ChartTooltip";
 
 const UNIT_LABELS: Record<PRUnit, string> = {
   time_sec: "Tempo (seg)",
@@ -151,9 +153,11 @@ function PRAttemptChart({
   movement: PRMovement | null;
   attempts: PRAttempt[];
 }) {
-  const [chartWidth, setChartWidth] = useState(300);
+  const { width: windowWidth } = useWindowDimensions();
+  const [chartWidth, setChartWidth] = useState(Math.max(320, windowWidth - 56));
   const [selected, setSelected] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number } | null>(null);
 
   if (!movement) return null;
   const chartMovement = movement;
@@ -194,13 +198,14 @@ function PRAttemptChart({
   const maxV = Math.max(...values);
   const range = maxV - minV || 1;
 
-  const plotWidth = Math.max(80, chartWidth - CHART_L - CHART_R);
+  const plotWidth = Math.max(160, chartWidth - CHART_L - CHART_R);
   const plotHeight = CHART_H - CHART_T;
   const n = ordered.length;
   const pointW = n > 1 ? plotWidth / (n - 1) : plotWidth;
 
   const activeIndex = hovered ?? selected;
-  const activeAttempt = activeIndex != null ? ordered[activeIndex] : null;
+  const selectedAttempt = selected != null ? ordered[selected] : null;
+  const hoveredAttempt = hovered != null ? ordered[hovered] : null;
 
   const bestLabel = formatValue(chartMovement.lower_is_better ? minV : maxV, chartMovement.unit);
   const worstLabel = formatValue(chartMovement.lower_is_better ? maxV : minV, chartMovement.unit);
@@ -293,11 +298,37 @@ function PRAttemptChart({
           {...({
             onPointerMove: (e: any) => {
               const x = e.nativeEvent.offsetX ?? e.nativeEvent.locationX;
+              const y = e.nativeEvent.offsetY ?? e.nativeEvent.locationY ?? 0;
               setHovered(Math.max(0, Math.min(n - 1, Math.round(x / pointW))));
+              setTooltip({
+                x: Math.min(chartWidth - 176, CHART_L + x + 12),
+                y: Math.max(8, CHART_T + y - 44),
+              });
             },
-            onPointerLeave: () => setHovered(null),
+            onPointerLeave: () => {
+              setHovered(null);
+              setTooltip(null);
+            },
           } as any)}
         />
+
+        <ChartTooltip
+          visible={hoveredAttempt != null && tooltip != null}
+          x={tooltip?.x ?? 0}
+          y={tooltip?.y ?? 0}
+        >
+          {hoveredAttempt && (
+            <View className="gap-0.5">
+              <Text className="text-surface-400 text-[10px]">
+                {format(parseISO(hoveredAttempt.date), "dd/MM/yyyy", { locale: ptBR })}
+              </Text>
+              <Text className="text-white text-xs font-bold">
+                {formatValue(hoveredAttempt.value, movement.unit)}
+                {hoveredAttempt.is_pr ? " · PR" : ""}
+              </Text>
+            </View>
+          )}
+        </ChartTooltip>
 
         {/* X axis: first, middle (if >2), last */}
         <View
@@ -318,12 +349,12 @@ function PRAttemptChart({
         </View>
       </View>
 
-      {activeAttempt && (
+      {selectedAttempt && (
         <View className="bg-surface-700/50 border border-surface-600/40 rounded-xl px-3 py-2">
           <Text className="text-white text-xs font-semibold">
-            {format(parseISO(activeAttempt.date), "dd/MM/yy", { locale: ptBR })}:{" "}
-            {formatValue(activeAttempt.value, movement.unit)}
-            {activeAttempt.is_pr ? " · PR" : ""}
+            {format(parseISO(selectedAttempt.date), "dd/MM/yy", { locale: ptBR })}:{" "}
+            {formatValue(selectedAttempt.value, movement.unit)}
+            {selectedAttempt.is_pr ? " · PR" : ""}
           </Text>
         </View>
       )}

@@ -2,13 +2,17 @@ import { useEffect } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import "../src/styles/global.css";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/stores/auth";
 import { useAppUpdate } from "@/hooks/useAppUpdate";
+import { useAppAutomation } from "@/hooks/useAppAutomation";
 import { useNativeVersionGate } from "@/hooks/useNativeVersionGate";
+import { ensureNotificationChannel } from "@/lib/notifications";
 import { UpdateBanner } from "@/components/ui/UpdateBanner";
 import { NativeUpdateModal } from "@/components/ui/NativeUpdateModal";
+import "@/lib/backgroundAutomation";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,6 +37,18 @@ function UpdateLayer() {
       />
     </>
   );
+}
+
+function AutomationLayer() {
+  useAppAutomation();
+
+  useEffect(() => {
+    ensureNotificationChannel().catch(() => {
+      // Channel creation is best effort.
+    });
+  }, []);
+
+  return null;
 }
 
 export default function RootLayout() {
@@ -71,13 +87,16 @@ export default function RootLayout() {
   }, [setSession]);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <StatusBar style="light" />
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(tabs)" />
-      </Stack>
-      <UpdateLayer />
-    </QueryClientProvider>
+    <SafeAreaProvider>
+      <QueryClientProvider client={queryClient}>
+        <StatusBar style="light" translucent backgroundColor="transparent" />
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="(tabs)" />
+        </Stack>
+        <AutomationLayer />
+        <UpdateLayer />
+      </QueryClientProvider>
+    </SafeAreaProvider>
   );
 }

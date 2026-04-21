@@ -1,5 +1,15 @@
 import { supabase } from "./supabase";
-import { DailyLog, RunActivity, RunSession, PRMovement, PRAttempt, UserProfile } from "@/types";
+import {
+  DailyLog,
+  RunActivity,
+  RunSession,
+  PRMovement,
+  PRAttempt,
+  UserProfile,
+  UserAppSettings,
+  WaterPreset,
+  WaterIntake,
+} from "@/types";
 import { format } from "date-fns";
 
 async function getUserId(): Promise<string> {
@@ -34,6 +44,28 @@ export async function upsertProfile(
 
 // ─── Daily Logs ──────────────────────────────────────────────────────────────
 
+export async function getUserAppSettings(): Promise<UserAppSettings | null> {
+  const { data, error } = await supabase
+    .from("user_app_settings")
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function upsertUserAppSettings(
+  settings: Partial<UserAppSettings>
+): Promise<UserAppSettings> {
+  const userId = await getUserId();
+  const { data, error } = await supabase
+    .from("user_app_settings")
+    .upsert({ ...settings, user_id: userId }, { onConflict: "user_id" })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 export async function getDailyLog(date: Date): Promise<DailyLog | null> {
   const dateStr = format(date, "yyyy-MM-dd");
   const { data, error } = await supabase
@@ -59,6 +91,18 @@ export async function getDailyLogs(
   return data ?? [];
 }
 
+export async function getLatestWeightLog(): Promise<DailyLog | null> {
+  const { data, error } = await supabase
+    .from("daily_logs")
+    .select("*")
+    .not("weight_kg", "is", null)
+    .order("date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 export async function upsertDailyLog(
   log: Partial<DailyLog> & { date: string }
 ): Promise<DailyLog> {
@@ -73,6 +117,98 @@ export async function upsertDailyLog(
 }
 
 // ─── Running Activities ──────────────────────────────────────────────────────
+
+export async function getWaterPresets(): Promise<WaterPreset[]> {
+  const { data, error } = await supabase
+    .from("water_presets")
+    .select("*")
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function saveWaterPreset(
+  preset: Partial<WaterPreset> & { label: string; amount_ml: number }
+): Promise<WaterPreset> {
+  const userId = await getUserId();
+
+  if (preset.id) {
+    const { data, error } = await supabase
+      .from("water_presets")
+      .update({
+        label: preset.label,
+        amount_ml: preset.amount_ml,
+        sort_order: preset.sort_order ?? 0,
+      })
+      .eq("id", preset.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from("water_presets")
+    .insert({
+      user_id: userId,
+      label: preset.label,
+      amount_ml: preset.amount_ml,
+      sort_order: preset.sort_order ?? 0,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteWaterPreset(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("water_presets")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function getWaterIntakes(loggedDate: string): Promise<WaterIntake[]> {
+  const { data, error } = await supabase
+    .from("water_intakes")
+    .select("*, preset:water_presets(*)")
+    .eq("logged_date", loggedDate)
+    .order("occurred_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createWaterIntake(
+  intake: Pick<WaterIntake, "logged_date" | "occurred_at" | "amount_ml"> &
+    Partial<Pick<WaterIntake, "preset_id" | "source" | "notes">>
+): Promise<WaterIntake> {
+  const userId = await getUserId();
+  const { data, error } = await supabase
+    .from("water_intakes")
+    .insert({
+      user_id: userId,
+      logged_date: intake.logged_date,
+      occurred_at: intake.occurred_at,
+      amount_ml: intake.amount_ml,
+      preset_id: intake.preset_id ?? null,
+      source: intake.source ?? "manual",
+      notes: intake.notes ?? null,
+    })
+    .select("*, preset:water_presets(*)")
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteWaterIntake(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("water_intakes")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
 
 export async function getRunActivities(
   from?: Date,

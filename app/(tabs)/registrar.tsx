@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   ScrollView,
   View,
@@ -10,7 +10,7 @@ import {
   Platform,
   ActivityIndicator,
 } from "react-native";
-import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { addDays, format, parseISO, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useDailyLog, useUpsertDailyLog } from "@/hooks/useDailyLog";
@@ -159,11 +159,13 @@ function validateNumber(
 
 export default function RegistrarScreen() {
   const { date: dateParam } = useLocalSearchParams<{ date?: string }>();
+  const saveRedirectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [today, setToday] = useState(() =>
     dateParam ? parseISO(String(dateParam)) : new Date()
   );
   const [saunaOpen, setSaunaOpen] = useState(false);
   const [outrosOpen, setOutrosOpen] = useState(false);
+  const [saveRedirecting, setSaveRedirecting] = useState(false);
   const isToday = format(today, "yyyy-MM-dd") === format(new Date(), "yyyy-MM-dd");
 
   useFocusEffect(
@@ -255,16 +257,26 @@ export default function RegistrarScreen() {
     bpm_musculacao: existing?.bpm_musculacao ?? null,
     kcal_corrida: null, min_corrida: null, temp_corrida: null, bpm_corrida: null,
     kcal_outros: num(form.kcal_outros),
+    min_outros: existing?.min_outros ?? null,
     min_sauna: num(form.min_sauna), temp_sauna: num(form.temp_sauna), bpm_sauna: num(form.bpm_sauna),
     surplus_deficit_kcal: num(form.surplus),
     protein_g: null, carbs_g: null, water_consumed_ml: null,
     whoop_strain: existing?.whoop_strain ?? null,
     whoop_recovery: existing?.whoop_recovery ?? null,
     whoop_kcal: existing?.whoop_kcal ?? null,
+    bpm_outros: existing?.bpm_outros ?? null,
     created_at: "", updated_at: "",
   };
 
   const targets = weightNum ? computeDailyCalculations(previewLog, today, userMetrics) : null;
+
+  useEffect(() => {
+    return () => {
+      if (saveRedirectTimeoutRef.current) {
+        clearTimeout(saveRedirectTimeoutRef.current);
+      }
+    };
+  }, []);
 
   async function handleSave() {
     const errors: string[] = [];
@@ -312,9 +324,16 @@ export default function RegistrarScreen() {
 
     try {
       await save(payload);
-      Alert.alert("✅ Salvo!", "Registro do dia atualizado.");
+      if (saveRedirectTimeoutRef.current) {
+        clearTimeout(saveRedirectTimeoutRef.current);
+      }
+      setSaveRedirecting(true);
+      saveRedirectTimeoutRef.current = setTimeout(() => {
+        router.replace("/(tabs)/hoje");
+      }, 900);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Não foi possível salvar.";
+      setSaveRedirecting(false);
+      const message = err instanceof Error ? err.message : "Nao foi possivel salvar.";
       Alert.alert("Erro", message);
     }
   }
@@ -363,6 +382,18 @@ export default function RegistrarScreen() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {saveRedirecting && (
+          <View className="bg-brand-500/10 border border-brand-500/25 rounded-2xl px-4 py-3 flex-row items-center gap-3">
+            <Ionicons name="checkmark-circle" size={18} color="#22c55e" />
+            <View className="flex-1">
+              <Text className="text-brand-400 text-sm font-bold">Registro salvo</Text>
+              <Text className="text-surface-400 text-xs mt-0.5">
+                Seu registro foi atualizado com sucesso. Abrindo Hoje...
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* ── Corpo ─────────────────────────────────────── */}
         <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 gap-3">
@@ -520,7 +551,7 @@ export default function RegistrarScreen() {
         <TouchableOpacity
           className="bg-brand-500 rounded-2xl py-4 items-center mt-1"
           onPress={handleSave}
-          disabled={isPending}
+          disabled={isPending || saveRedirecting}
           style={{ shadowColor: "#10b981", shadowOpacity: 0.3, shadowRadius: 12, elevation: 4 }}
         >
           {isPending ? (

@@ -1,6 +1,7 @@
 import { Tabs, router } from "expo-router";
 import { useEffect } from "react";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthStore } from "@/stores/auth";
 
 type IoniconName = React.ComponentProps<typeof Ionicons>["name"];
@@ -17,6 +18,8 @@ function TabIcon({ name, focused }: { name: IoniconName; focused: boolean }) {
 
 export default function TabsLayout() {
   const { session, loading } = useAuthStore();
+  const insets = useSafeAreaInsets();
+  const tabBarBottomPadding = Math.max(insets.bottom, 10);
 
   useEffect(() => {
     if (!loading && !session) {
@@ -28,14 +31,19 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        sceneStyle: {
+          backgroundColor: "#0f1014",
+          paddingTop: insets.top,
+        },
         tabBarStyle: {
           backgroundColor: "#1c1d23",
           borderTopColor: "#2c2d36",
           borderTopWidth: 1,
-          paddingBottom: 10,
+          paddingBottom: tabBarBottomPadding,
           paddingTop: 6,
-          height: 68,
+          height: 58 + tabBarBottomPadding,
         },
+        tabBarHideOnKeyboard: true,
         tabBarActiveTintColor: "#10b981",
         tabBarInactiveTintColor: "#4a4b58",
         tabBarLabelStyle: {
@@ -67,6 +75,13 @@ export default function TabsLayout() {
         options={{
           title: "Corridas",
           tabBarIcon: ({ focused }) => <TabIcon name="walk" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="agua"
+        options={{
+          title: "Agua",
+          tabBarIcon: ({ focused }) => <TabIcon name="water" focused={focused} />,
         }}
       />
       <Tabs.Screen

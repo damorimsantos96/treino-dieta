@@ -2,6 +2,7 @@ import { DailyLog, DailyCalculations } from "@/types";
 
 const SWEAT_RATE_ML_MIN = 2320 / 60;
 const REF_HR = 157;
+const OTHER_ACTIVITY_WATER_FACTOR = 0.7;
 
 function getAgeYears(birthDate: Date, referenceDate: Date): number {
   const diff = referenceDate.getTime() - birthDate.getTime();
@@ -48,7 +49,8 @@ export function calculateTDEE(
     (log.min_corrida ?? 0) +
     (log.min_crossfit ?? 0) +
     (log.min_musculacao ?? 0) +
-    (log.min_ciclismo ?? 0);
+    (log.min_ciclismo ?? 0) +
+    (log.min_outros ?? 0);
 
   const nonActiveMin = 24 * 60 - totalActivityMin;
 
@@ -92,13 +94,18 @@ export function calculateWaterMl(log: DailyLog): number {
     SWEAT_RATE_ML_MIN * (log.min_ciclismo ?? 0) * 0.7 *
     hrFactor(log.bpm_ciclismo) * tempFactor(log.temp_ciclismo);
 
+  // Neutral fallback for imported sessions that the provider classifies as "other".
+  const outros =
+    SWEAT_RATE_ML_MIN * (log.min_outros ?? 0) * OTHER_ACTIVITY_WATER_FACTOR *
+    hrFactor(log.bpm_outros) * tempFactor(null);
+
   const saunaTemp = log.temp_sauna ?? 80;
   const taxaFatorTemp = 1 + 0.08 * Math.exp(0.09 * (saunaTemp - 19));
   const sauna =
     SWEAT_RATE_ML_MIN * (log.min_sauna ?? 0) *
     (0.3 * hrFactor(log.bpm_sauna) + 0.7 * taxaFatorTemp);
 
-  return (basal + academia + boxe + surf + corrida + ciclismo + sauna) * 1.05;
+  return (basal + academia + boxe + surf + corrida + ciclismo + outros + sauna) * 1.05;
 }
 
 export function calculateMinProtein(weight: number | null): number {
@@ -125,7 +132,7 @@ export function computeDailyCalculations(
   const totalActivityMin =
     (log.min_academia ?? 0) + (log.min_boxe ?? 0) + (log.min_surf ?? 0) +
     (log.min_corrida ?? 0) + (log.min_crossfit ?? 0) + (log.min_musculacao ?? 0) +
-    (log.min_ciclismo ?? 0) + (log.min_sauna ?? 0);
+    (log.min_ciclismo ?? 0) + (log.min_outros ?? 0) + (log.min_sauna ?? 0);
 
   const totalActivityKcal =
     (log.kcal_academia ?? 0) + (log.kcal_boxe ?? 0) + (log.kcal_surf ?? 0) +
@@ -158,4 +165,55 @@ export function formatDuration(minutes: number): string {
 export function formatWater(ml: number): string {
   if (ml >= 1000) return `${(ml / 1000).toFixed(1)}L`;
   return `${Math.round(ml)}ml`;
+}
+
+export function parseClockToMinutes(value: string): number {
+  const match = /^(\d{2}):(\d{2})$/.exec(value.trim());
+  if (!match) return 0;
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return 0;
+
+  return hours * 60 + minutes;
+}
+
+export function expectedHydrationByTime(
+  targetMl: number,
+  now: Date,
+  startTime: string,
+  endTime: string
+): number {
+  if (targetMl <= 0) return 0;
+
+  const startMinutes = parseClockToMinutes(startTime);
+  const endMinutes = parseClockToMinutes(endTime);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  if (endMinutes <= startMinutes) return targetMl;
+  if (nowMinutes <= startMinutes) return 0;
+  if (nowMinutes >= endMinutes) return targetMl;
+
+  const progress = (nowMinutes - startMinutes) / (endMinutes - startMinutes);
+  return targetMl * progress;
+}
+
+export function hydrationProgressStatus(
+  targetMl: number,
+  consumedMl: number,
+  now: Date,
+  startTime: string,
+  endTime: string
+) {
+  const expectedMl = expectedHydrationByTime(targetMl, now, startTime, endTime);
+  const remainingMl = Math.max(0, targetMl - consumedMl);
+  const deltaMl = consumedMl - expectedMl;
+
+  return {
+    expectedMl,
+    remainingMl,
+    deltaMl,
+    isBehind: consumedMl < expectedMl,
+  };
 }

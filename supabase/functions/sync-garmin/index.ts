@@ -480,7 +480,8 @@ async function importActivity(supabaseAdmin: any, userId: string, session: Garmi
   if (!id || !date) return null;
 
   const laps = await fetchGarminLaps(session, id);
-  const intervals = normalizeLaps(laps.length ? laps : [activity], date, id);
+  const activityDistanceKm = metersToKm(activity.distance);
+  const intervals = normalizeLaps(laps.length ? laps : [activity], date, id, activityDistanceKm);
   const totalKm = intervals.reduce((sum, interval) => sum + (interval.distance_km ?? 0), 0);
   const totalMin = intervals.reduce((sum, interval) => sum + (interval.duration_min ?? 0), 0);
   const avgHr = weightedHr(intervals);
@@ -494,7 +495,7 @@ async function importActivity(supabaseAdmin: any, userId: string, session: Garmi
       source: "garmin",
       external_id: id,
       name: activity.activityName ?? "Corrida Garmin",
-      distance_km: totalKm || metersToKm(activity.distance),
+      distance_km: totalKm || activityDistanceKm,
       duration_min: totalMin || durationSeconds(activity.duration ?? activity.elapsedDuration) / 60,
       avg_pace_min_km: totalKm > 0 && totalMin > 0 ? totalMin / totalKm : null,
       avg_hr: avgHr ?? activity.averageHR ?? null,
@@ -535,8 +536,8 @@ async function importActivity(supabaseAdmin: any, userId: string, session: Garmi
   return savedActivity;
 }
 
-function normalizeLaps(laps: any[], date: string, activityIdValue: string) {
-  return laps.map((lap, index) => {
+function normalizeLaps(laps: any[], date: string, activityIdValue: string, activityDistanceKm: number) {
+  const normalized = laps.map((lap, index) => {
     const distanceKm = metersToKm(lap.distance ?? lap.totalDistance ?? lap.distanceMeters);
     const durationMin = durationSeconds(
       lap.duration ?? lap.elapsedDuration ?? lap.movingDuration ?? lap.totalTimerTime
@@ -558,6 +559,27 @@ function normalizeLaps(laps: any[], date: string, activityIdValue: string) {
       notes: null,
     };
   });
+
+  if (shouldSkipTrailingSummaryLap(normalized, activityDistanceKm)) {
+    return normalized.slice(0, -1);
+  }
+
+  return normalized;
+}
+
+function shouldSkipTrailingSummaryLap(intervals: any[], activityDistanceKm: number): boolean {
+  if (intervals.length <= 1 || activityDistanceKm <= 0) return false;
+
+  const lastInterval = intervals[intervals.length - 1];
+  const durationMin = lastInterval?.duration_min ?? 0;
+  const distanceKm = lastInterval?.distance_km ?? 0;
+  const hasPace = typeof lastInterval?.pace_min_km === "number" && Number.isFinite(lastInterval.pace_min_km);
+  const distanceToleranceKm = Math.max(0.1, activityDistanceKm * 0.01);
+
+  // Garmin occasionally appends a zero-duration summary lap that mirrors the run total.
+  return durationMin === 0 &&
+    !hasPace &&
+    Math.abs(distanceKm - activityDistanceKm) <= distanceToleranceKm;
 }
 
 function classifyLap(lap: any): string {

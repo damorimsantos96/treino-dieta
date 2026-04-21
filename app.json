@@ -24,7 +24,10 @@
       "package": "com.diego.treinodieta",
       "permissions": [
         "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT"
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.health.READ_WEIGHT",
+        "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"
       ]
     },
     "web": {
@@ -51,10 +54,14 @@
           "android": {
             "compileSdkVersion": 36,
             "targetSdkVersion": 35,
-            "buildToolsVersion": "36.0.0"
+            "buildToolsVersion": "36.0.0",
+            "minSdkVersion": 26
           }
         }
-      ]
+      ],
+      "expo-background-task",
+      "expo-notifications",
+      "expo-health-connect"
     ],
     "experiments": {
       "typedRoutes": true

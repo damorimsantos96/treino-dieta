@@ -32,6 +32,7 @@ import { Card, SectionLabel } from "@/components/ui/Card";
 import { Ionicons } from "@expo/vector-icons";
 import { RunActivity } from "@/types";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
+import { ChartTooltip } from "@/components/ui/ChartTooltip";
 
 const SCREEN_FALLBACK = 320;
 const CHART_LEFT = 36;
@@ -90,6 +91,7 @@ function SimpleBarChart({
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number } | null>(null);
   if (data.length === 0) return null;
 
   const max = Math.max(...data.map((item) => item.value), 1);
@@ -98,7 +100,8 @@ function SimpleBarChart({
   const slotWidth = plotWidth / data.length;
   const barWidth = Math.max(1, Math.min(24, slotWidth * 0.72));
   const activeIndex = hovered ?? selected;
-  const selectedItem = activeIndex == null ? null : data[activeIndex];
+  const selectedItem = selected == null ? null : data[selected];
+  const hoveredItem = hovered == null ? null : data[hovered];
 
   return (
     <View className="gap-2">
@@ -123,8 +126,19 @@ function SimpleBarChart({
               className="items-center justify-end"
               style={{ width: slotWidth, height: plotHeight }}
               {...({
-                onPointerEnter: () => setHovered(index),
-                onPointerLeave: () => setHovered(null),
+                onPointerMove: (e: any) => {
+                  const x = e.nativeEvent.offsetX ?? e.nativeEvent.locationX ?? 0;
+                  const y = e.nativeEvent.offsetY ?? e.nativeEvent.locationY ?? 0;
+                  setHovered(index);
+                  setTooltip({
+                    x: Math.min(chartWidth - 176, CHART_LEFT + index * slotWidth + x + 12),
+                    y: Math.max(8, CHART_TOP + y - 44),
+                  });
+                },
+                onPointerLeave: () => {
+                  setHovered(null);
+                  setTooltip(null);
+                },
               } as any)}
             >
               <View
@@ -139,6 +153,20 @@ function SimpleBarChart({
             </TouchableOpacity>
           ))}
         </View>
+        <ChartTooltip
+          visible={hoveredItem != null && tooltip != null}
+          x={tooltip?.x ?? 0}
+          y={tooltip?.y ?? 0}
+        >
+          {hoveredItem && (
+            <View className="gap-0.5">
+              <Text className="text-surface-400 text-[10px]">{hoveredItem.label}</Text>
+              <Text className="text-white text-xs font-bold">
+                {Math.round(hoveredItem.value).toLocaleString()} kcal
+              </Text>
+            </View>
+          )}
+        </ChartTooltip>
         <View
           className="absolute bottom-0"
           style={{ left: CHART_LEFT, width: plotWidth, height: 14 }}
@@ -185,6 +213,7 @@ function MultiSparkLine({
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number } | null>(null);
   if (series.length === 0) return null;
   const allValues = series.flatMap((item) => item.data).filter((value) => Number.isFinite(value));
   if (allValues.length < 2) return null;
@@ -197,8 +226,11 @@ function MultiSparkLine({
   const plotHeight = height - CHART_TOP;
   const pointW = maxLength > 1 ? plotWidth / (maxLength - 1) : plotWidth;
   const activeIndex = hovered ?? selected;
-  const selectedValues = activeIndex != null
-    ? series.map((line) => line.data[activeIndex]).filter(Number.isFinite)
+  const selectedValues = selected != null
+    ? series.map((line) => line.data[selected]).filter(Number.isFinite)
+    : [];
+  const hoveredValues = hovered != null
+    ? series.map((line) => line.data[hovered]).filter(Number.isFinite)
     : [];
 
   return (
@@ -282,11 +314,39 @@ function MultiSparkLine({
           {...({
             onPointerMove: (e: any) => {
               const x = e.nativeEvent.offsetX ?? e.nativeEvent.locationX;
-              setHovered(Math.max(0, Math.min(maxLength - 1, Math.round(x / pointW))));
+              const y = e.nativeEvent.offsetY ?? e.nativeEvent.locationY ?? 0;
+              const index = Math.max(0, Math.min(maxLength - 1, Math.round(x / pointW)));
+              setHovered(index);
+              setTooltip({
+                x: Math.min(chartWidth - 196, CHART_LEFT + x + 12),
+                y: Math.max(8, CHART_TOP + y - 52),
+              });
             },
-            onPointerLeave: () => setHovered(null),
+            onPointerLeave: () => {
+              setHovered(null);
+              setTooltip(null);
+            },
           } as any)}
         />
+        <ChartTooltip
+          visible={hovered != null && hoveredValues.length > 0 && tooltip != null}
+          x={tooltip?.x ?? 0}
+          y={tooltip?.y ?? 0}
+        >
+          {hovered != null && (
+            <View className="gap-1">
+              <Text className="text-surface-400 text-[10px]">{labels[hovered]}</Text>
+              {series.map((line) => (
+                <View key={line.label} className="flex-row items-center gap-1.5">
+                  <View className="w-2 h-2 rounded-full" style={{ backgroundColor: line.color }} />
+                  <Text className="text-white text-xs font-semibold">
+                    {line.label}: {line.data[hovered]?.toFixed(1)} kg
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </ChartTooltip>
         <View
           className="absolute bottom-0 flex-row justify-between"
           style={{ left: CHART_LEFT, right: CHART_RIGHT }}
@@ -298,15 +358,15 @@ function MultiSparkLine({
           ))}
         </View>
       </View>
-      {activeIndex != null && selectedValues.length > 0 && (
+      {selected != null && selectedValues.length > 0 && (
         <View className="bg-surface-700/50 border border-surface-600/40 rounded-xl px-3 py-2">
-          <Text className="text-surface-400 text-xs mb-1">{labels[activeIndex]}</Text>
+          <Text className="text-surface-400 text-xs mb-1">{labels[selected]}</Text>
           <View className="flex-row gap-4 flex-wrap">
             {series.map((line) => (
               <View key={line.label} className="flex-row items-center gap-1.5">
                 <View className="w-2 h-2 rounded-full" style={{ backgroundColor: line.color }} />
                 <Text className="text-white text-xs font-semibold">
-                  {line.label}: {line.data[activeIndex]?.toFixed(1)} kg
+                  {line.label}: {line.data[selected]?.toFixed(1)} kg
                 </Text>
               </View>
             ))}
@@ -391,6 +451,7 @@ function RunVolumePaceChart({
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number } | null>(null);
   const mode = runBucketMode(period);
   const data = useMemo(() => buildRunBuckets(activities, from, to, mode), [activities, from, to, mode]);
   if (data.length === 0) return null;
@@ -407,7 +468,8 @@ function RunVolumePaceChart({
   const slotWidth = plotWidth / data.length;
   const barWidth = Math.max(2, Math.min(26, slotWidth * 0.72));
   const activeIndex = hovered ?? selected;
-  const selectedItem = activeIndex == null ? null : data[activeIndex];
+  const selectedItem = selected == null ? null : data[selected];
+  const hoveredItem = hovered == null ? null : data[hovered];
 
   return (
     <View className="gap-3">
@@ -448,8 +510,19 @@ function RunVolumePaceChart({
               className="items-center justify-end"
               style={{ width: slotWidth, height: plotHeight }}
               {...({
-                onPointerEnter: () => setHovered(index),
-                onPointerLeave: () => setHovered(null),
+                onPointerMove: (e: any) => {
+                  const x = e.nativeEvent.offsetX ?? e.nativeEvent.locationX ?? 0;
+                  const y = e.nativeEvent.offsetY ?? e.nativeEvent.locationY ?? 0;
+                  setHovered(index);
+                  setTooltip({
+                    x: Math.min(chartWidth - 196, CHART_LEFT + index * slotWidth + x + 12),
+                    y: Math.max(8, CHART_TOP + y - 52),
+                  });
+                },
+                onPointerLeave: () => {
+                  setHovered(null);
+                  setTooltip(null);
+                },
               } as any)}
             >
               <View
@@ -524,6 +597,22 @@ function RunVolumePaceChart({
             );
           })}
         </View>
+
+        <ChartTooltip
+          visible={hoveredItem != null && tooltip != null}
+          x={tooltip?.x ?? 0}
+          y={tooltip?.y ?? 0}
+        >
+          {hoveredItem && (
+            <View className="gap-0.5">
+              <Text className="text-surface-400 text-[10px]">{hoveredItem.label}</Text>
+              <Text className="text-white text-xs font-bold">
+                {hoveredItem.distance.toFixed(1)} km
+                {hoveredItem.pace ? ` · ${formatPace(hoveredItem.pace)}/km` : ""}
+              </Text>
+            </View>
+          )}
+        </ChartTooltip>
       </View>
 
       {selectedItem && (
@@ -641,7 +730,7 @@ export default function AnalisesScreen() {
         return (
           (log.min_academia ?? 0) + (log.min_boxe ?? 0) + (log.min_surf ?? 0) +
           (log.min_corrida ?? 0) + (log.min_crossfit ?? 0) + (log.min_musculacao ?? 0) +
-          (log.min_ciclismo ?? 0) > 0
+          (log.min_ciclismo ?? 0) + (log.min_outros ?? 0) > 0
         );
       })
       .map((log) => log.date)
@@ -879,6 +968,7 @@ export default function AnalisesScreen() {
                 { label: "Ciclismo", key: "min_ciclismo", color: "#10b981" },
                 { label: "CrossFit", key: "min_crossfit", color: "#f59e0b" },
                 { label: "Musculacao", key: "min_musculacao", color: "#8b5cf6" },
+                { label: "Outros", key: "min_outros", color: "#fb7185" },
               ]
                 .map((activity) => ({
                   ...activity,

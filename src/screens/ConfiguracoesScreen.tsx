@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { format } from "date-fns";
 import {
   View,
   Text,
@@ -15,7 +16,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@/stores/auth";
 import { useBiometrics } from "@/hooks/useBiometrics";
 import { supabase } from "@/lib/supabase";
-import { getProfile, upsertProfile } from "@/lib/api";
+import { getProfile, getUserAppSettings, upsertProfile, upsertUserAppSettings } from "@/lib/api";
+import { DEFAULT_USER_APP_SETTINGS } from "@/constants/appDefaults";
+import {
+  getHealthConnectAvailability,
+  openHealthConnectAppSettings,
+  openHealthConnectManager,
+  requestHealthConnectPermissions,
+  syncHealthConnectWeights,
+} from "@/lib/healthConnect";
 import { SyncCandidate } from "@/types";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 
@@ -118,6 +127,7 @@ export default function ConfiguracoesScreen() {
   const [candidates, setCandidates] = useState<SyncCandidate[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [profileSaved, setProfileSaved] = useState(false);
+  const [healthConnectBusy, setHealthConnectBusy] = useState<"idle" | "permissions" | "sync" | "save">("idle");
   const [profileForm, setProfileForm] = useState({
     name: "",
     birth_date: "1996-07-01",
@@ -129,9 +139,24 @@ export default function ConfiguracoesScreen() {
     queryFn: getProfile,
   });
 
+  const { data: appSettings } = useQuery({
+    queryKey: ["user_app_settings"],
+    queryFn: getUserAppSettings,
+  });
+
+  const { data: healthConnectAvailability, refetch: refetchHealthConnectAvailability } = useQuery({
+    queryKey: ["health_connect_availability"],
+    queryFn: getHealthConnectAvailability,
+  });
+
   const { mutateAsync: saveProfile, isPending: savingProfile } = useMutation({
     mutationFn: upsertProfile,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["user_profile"] }),
+  });
+
+  const { mutateAsync: saveAppSettings } = useMutation({
+    mutationFn: upsertUserAppSettings,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["user_app_settings"] }),
   });
 
   useEffect(() => {
@@ -142,6 +167,11 @@ export default function ConfiguracoesScreen() {
       height_cm: String(profile.height_cm ?? 172),
     });
   }, [profile]);
+
+  const effectiveAppSettings = {
+    ...DEFAULT_USER_APP_SETTINGS,
+    ...(appSettings ?? {}),
+  };
 
   async function callSyncFunction(
     provider: "whoop" | "garmin",
@@ -165,6 +195,12 @@ export default function ConfiguracoesScreen() {
     setState("loading");
     try {
       const data = await callSyncFunction(provider, "list");
+      if ((data?.repaired ?? 0) > 0) {
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ["daily_log"] }),
+          qc.invalidateQueries({ queryKey: ["daily_logs"] }),
+        ]);
+      }
       const list = (data.candidates ?? []) as SyncCandidate[];
       setCandidates(list);
       setSelectedIds(new Set());
@@ -258,6 +294,119 @@ export default function ConfiguracoesScreen() {
     }
   }
 
+  async function handleGrantHealthConnect() {
+    setHealthConnectBusy("permissions");
+    try {
+      const availability = await requestHealthConnectPermissions({ includeBackground: true });
+      await saveAppSettings({
+        health_connect_enabled: availability.hasWeightAccess,
+        health_connect_background_enabled: availability.hasBackgroundAccess,
+        health_connect_last_error: availability.hasWeightAccess
+          ? null
+          : "Permissao de leitura de peso nao foi concedida.",
+      });
+      await refetchHealthConnectAvailability();
+      Alert.alert(
+        "Saude Connect",
+        availability.hasWeightAccess
+          ? availability.hasBackgroundAccess
+            ? "Permissoes de peso e leitura em segundo plano concedidas."
+            : "Permissao de peso concedida. A leitura em segundo plano ficou desativada."
+          : "A permissao de leitura de peso nao foi concedida."
+      );
+    } catch (err: any) {
+      Alert.alert("Saude Connect", err.message);
+    } finally {
+      setHealthConnectBusy("idle");
+    }
+  }
+
+  async function handleSaveHealthConnectSettings(next: {
+    enabled?: boolean;
+    backgroundEnabled?: boolean;
+    lastError?: string | null;
+    lastSyncAt?: string | null;
+  }) {
+    setHealthConnectBusy("save");
+    try {
+      await saveAppSettings({
+        health_connect_enabled: next.enabled ?? effectiveAppSettings.health_connect_enabled,
+        health_connect_background_enabled:
+          next.backgroundEnabled ?? effectiveAppSettings.health_connect_background_enabled,
+        health_connect_last_error:
+          next.lastError === undefined ? effectiveAppSettings.health_connect_last_error : next.lastError,
+        health_connect_last_sync_at:
+          next.lastSyncAt === undefined ? effectiveAppSettings.health_connect_last_sync_at : next.lastSyncAt,
+      });
+    } finally {
+      setHealthConnectBusy("idle");
+    }
+  }
+
+  async function handleToggleHealthConnectEnabled() {
+    const nextEnabled = !effectiveAppSettings.health_connect_enabled;
+
+    if (nextEnabled && !healthConnectAvailability?.hasWeightAccess) {
+      await handleGrantHealthConnect();
+      return;
+    }
+
+    await handleSaveHealthConnectSettings({
+      enabled: nextEnabled,
+      backgroundEnabled: nextEnabled
+        ? effectiveAppSettings.health_connect_background_enabled
+        : false,
+      lastError: null,
+    });
+  }
+
+  async function handleToggleHealthConnectBackground() {
+    const nextBackground = !effectiveAppSettings.health_connect_background_enabled;
+
+    if (nextBackground && !healthConnectAvailability?.hasBackgroundAccess) {
+      await handleGrantHealthConnect();
+      return;
+    }
+
+    await handleSaveHealthConnectSettings({
+      enabled: true,
+      backgroundEnabled: nextBackground,
+      lastError: null,
+    });
+  }
+
+  async function handleSyncHealthConnectNow() {
+    setHealthConnectBusy("sync");
+    try {
+      const result = await syncHealthConnectWeights();
+      await saveAppSettings({
+        health_connect_enabled: true,
+        health_connect_last_sync_at: new Date().toISOString(),
+        health_connect_last_error: null,
+      });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["daily_log"] }),
+        qc.invalidateQueries({ queryKey: ["daily_logs"] }),
+        qc.invalidateQueries({ queryKey: ["health_connect_availability"] }),
+      ]);
+      Alert.alert(
+        "Saude Connect",
+        result.syncedDates > 0
+          ? `Peso sincronizado em ${result.syncedDates} dia(s).`
+          : "Nenhum peso novo foi encontrado para sincronizar agora."
+      );
+    } catch (err: any) {
+      await saveAppSettings({
+        health_connect_last_error: err.message,
+      }).catch(() => {
+        // Ignore persistence failures for the status message.
+      });
+      Alert.alert("Saude Connect", err.message);
+    } finally {
+      setHealthConnectBusy("idle");
+    }
+  }
+
   async function handleSignOut() {
     async function performSignOut() {
       try {
@@ -287,6 +436,18 @@ export default function ConfiguracoesScreen() {
   ).length;
   const allImportableSelected =
     importableCandidates.length > 0 && selectedImportableCount === importableCandidates.length;
+  const healthConnectSupported = healthConnectAvailability?.platformSupported && healthConnectAvailability?.isAvailable;
+  const healthConnectStatusLabel = !healthConnectAvailability?.platformSupported
+    ? "Disponivel somente no Android."
+    : healthConnectAvailability.needsProviderUpdate
+    ? "Atualize o provider do Health Connect neste dispositivo."
+    : !healthConnectAvailability.isAvailable
+    ? "Health Connect nao esta disponivel agora neste dispositivo."
+    : healthConnectAvailability.hasWeightAccess
+    ? effectiveAppSettings.health_connect_background_enabled
+      ? "Peso sincronizado automaticamente com leitura em segundo plano."
+      : "Peso pronto para sincronizar. A leitura em segundo plano esta desligada."
+    : "Conceda a permissao de peso para ler os dados vindos do Withings via Health Connect.";
 
   function toggleAllCandidates() {
     setSelectedIds(
@@ -377,6 +538,118 @@ export default function ConfiguracoesScreen() {
       </View>
 
       <SectionTitle title="Integrações" />
+
+      <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2 gap-3">
+        <View className="flex-row items-center gap-3">
+          <Text className="text-xl">⚕️</Text>
+          <View className="flex-1">
+            <Text className="text-white font-medium">Saude Connect / Withings</Text>
+            <Text className="text-surface-600 text-xs mt-0.5">
+              Le o peso que chega ao Health Connect e atualiza automaticamente o app.
+            </Text>
+          </View>
+          {healthConnectBusy !== "idle" && (
+            <ActivityIndicator size="small" color="#22c55e" />
+          )}
+        </View>
+
+        <Text className="text-surface-600 text-xs leading-5">
+          {healthConnectStatusLabel}
+        </Text>
+
+        {!!effectiveAppSettings.health_connect_last_sync_at && (
+          <Text className="text-surface-500 text-xs">
+            Ultima sincronizacao: {format(new Date(effectiveAppSettings.health_connect_last_sync_at), "dd/MM/yyyy HH:mm")}
+          </Text>
+        )}
+        {!!effectiveAppSettings.health_connect_last_error && (
+          <Text className="text-red-300 text-xs leading-5">
+            Ultimo erro: {effectiveAppSettings.health_connect_last_error}
+          </Text>
+        )}
+
+        <TouchableOpacity
+          className="flex-row items-center gap-3"
+          onPress={handleToggleHealthConnectEnabled}
+          disabled={!healthConnectAvailability?.platformSupported || healthConnectBusy !== "idle"}
+        >
+          <View
+            className={`w-5 h-5 rounded-md border-2 items-center justify-center ${
+              effectiveAppSettings.health_connect_enabled
+                ? "bg-brand-500 border-brand-600"
+                : "border-surface-600"
+            }`}
+          >
+            {effectiveAppSettings.health_connect_enabled && (
+              <Text className="text-white text-xs font-bold">✓</Text>
+            )}
+          </View>
+          <View className="flex-1">
+            <Text className="text-white text-sm font-semibold">Sincronizacao automatica</Text>
+            <Text className="text-surface-500 text-xs mt-0.5">
+              Faz a leitura do peso sempre que o app volta para o foreground.
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          className="flex-row items-center gap-3"
+          onPress={handleToggleHealthConnectBackground}
+          disabled={!healthConnectSupported || healthConnectBusy !== "idle"}
+        >
+          <View
+            className={`w-5 h-5 rounded-md border-2 items-center justify-center ${
+              effectiveAppSettings.health_connect_background_enabled
+                ? "bg-brand-500 border-brand-600"
+                : "border-surface-600"
+            }`}
+          >
+            {effectiveAppSettings.health_connect_background_enabled && (
+              <Text className="text-white text-xs font-bold">✓</Text>
+            )}
+          </View>
+          <View className="flex-1">
+            <Text className="text-white text-sm font-semibold">Leitura em segundo plano</Text>
+            <Text className="text-surface-500 text-xs mt-0.5">
+              Permite que o Android leia novos pesos em background quando a permissao existir.
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        <View className="flex-row gap-2">
+          <TouchableOpacity
+            className="flex-1 bg-surface-700 rounded-xl py-3 items-center"
+            onPress={handleGrantHealthConnect}
+            disabled={!healthConnectAvailability?.platformSupported || healthConnectBusy !== "idle"}
+          >
+            <Text className="text-white font-bold text-sm">Permitir acesso</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className="flex-1 bg-brand-500 rounded-xl py-3 items-center"
+            onPress={handleSyncHealthConnectNow}
+            disabled={!healthConnectSupported || !healthConnectAvailability?.hasWeightAccess || healthConnectBusy !== "idle"}
+          >
+            <Text className="text-white font-bold text-sm">Sincronizar agora</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View className="flex-row gap-2">
+          <TouchableOpacity
+            className="flex-1 bg-surface-700/70 border border-surface-600/40 rounded-xl py-3 items-center"
+            onPress={openHealthConnectManager}
+            disabled={!healthConnectAvailability?.platformSupported}
+          >
+            <Text className="text-white font-semibold text-sm">Gerenciar dados</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className="flex-1 bg-surface-700/70 border border-surface-600/40 rounded-xl py-3 items-center"
+            onPress={openHealthConnectAppSettings}
+            disabled={!healthConnectAvailability?.platformSupported}
+          >
+            <Text className="text-white font-semibold text-sm">Abrir app</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2">
         <View className="flex-row items-center gap-3">

@@ -18,6 +18,50 @@ const CORS = {
   "Access-Control-Max-Age": "86400",
 };
 
+type KcalField =
+  | "kcal_crossfit"
+  | "kcal_musculacao"
+  | "kcal_boxe"
+  | "kcal_surf"
+  | "kcal_ciclismo"
+  | "kcal_corrida"
+  | "kcal_outros";
+
+type MinField =
+  | "min_crossfit"
+  | "min_musculacao"
+  | "min_boxe"
+  | "min_surf"
+  | "min_ciclismo"
+  | "min_corrida"
+  | "min_outros";
+
+type BpmField =
+  | "bpm_crossfit"
+  | "bpm_musculacao"
+  | "bpm_boxe"
+  | "bpm_surf"
+  | "bpm_ciclismo"
+  | "bpm_corrida"
+  | "bpm_outros";
+
+type SportMapping = {
+  kcalField: KcalField;
+  minField: MinField | null;
+  bpmField: BpmField | null;
+};
+
+type NormalizedWorkout = {
+  id: string;
+  date: string;
+  name: string;
+  sportId: number | null;
+  mapping: SportMapping;
+  kcal: number | null;
+  minutes: number | null;
+  avgHr: number | null;
+};
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -135,16 +179,19 @@ Deno.serve(async (req) => {
     stage = "whoop_workouts";
     const workouts = await fetchWorkouts(accessToken);
 
+    stage = "repair_legacy";
+    const repaired = await repairLegacyOtherImports(supabaseAdmin, user.id, workouts);
+
     stage = "candidates";
     const candidates = await toCandidates(supabaseAdmin, user.id, workouts);
 
     if (mode === "list") {
-      return json({ candidates });
+      return json({ candidates, repaired });
     }
 
     const selected = candidates.filter((candidate) => selectedIds.has(candidate.id));
     if (selected.length === 0) {
-      return json({ imported: 0, message: "Nenhuma atividade selecionada." });
+      return json({ imported: 0, repaired, message: "Nenhuma atividade selecionada." });
     }
 
     const byId = new Map(workouts.map((workout: any) => [workoutId(workout), workout]));
@@ -157,6 +204,7 @@ Deno.serve(async (req) => {
     const imported = await importWorkouts(supabaseAdmin, user.id, workoutsToImport);
     return json({
       imported,
+      repaired,
       skipped: selected.length - imported,
       message: `Whoop: ${imported} atividades importadas.`,
     });
@@ -267,28 +315,27 @@ async function toCandidates(supabaseAdmin: any, userId: string, workouts: any[])
   if (error) throw dbError("whoop_imports_select", error);
 
   const imported = new Set((importedRows ?? []).map((row: any) => String(row.external_id)));
-  return workouts.map((workout: any) => ({
-    id: workoutId(workout),
-    date: workoutDate(workout),
-    name: workoutName(workout),
-    provider: "whoop",
-    duration_min: workoutDurationMin(workout),
-    kcal: workoutKcal(workout),
-    avg_hr: workoutAvgHr(workout),
-    already_imported: imported.has(workoutId(workout)),
-  }));
+  return workouts.map((workout: any) => {
+    const normalized = normalizeWorkout(workout);
+    return {
+      id: normalized.id,
+      date: normalized.date,
+      name: normalized.name,
+      provider: "whoop",
+      duration_min: normalized.minutes,
+      kcal: normalized.kcal,
+      avg_hr: normalized.avgHr,
+      already_imported: imported.has(normalized.id),
+    };
+  });
 }
 
 async function importWorkouts(supabaseAdmin: any, userId: string, workouts: any[]) {
   let imported = 0;
 
   for (const workout of workouts) {
-    const id = workoutId(workout);
-    const date = workoutDate(workout);
-    const mapping = mapSport(workout);
-    const kcal = workoutKcal(workout);
-    const minutes = workoutDurationMin(workout);
-    const avgHr = workoutAvgHr(workout);
+    const normalized = normalizeWorkout(workout);
+    const { id, date, mapping, kcal, minutes, avgHr } = normalized;
 
     if (!id || !date || !mapping || (!kcal && !minutes && !avgHr)) continue;
 
@@ -327,11 +374,7 @@ async function importWorkouts(supabaseAdmin: any, userId: string, workouts: any[
         user_id: userId,
         provider: "whoop",
         external_id: id,
-        metadata: {
-          date,
-          name: workoutName(workout),
-          sport_id: workout.sport_id ?? workout.sportId ?? null,
-        },
+        metadata: buildImportMetadata(normalized),
       }, { onConflict: "user_id,provider,external_id" });
     if (markerError) throw dbError("whoop_import_marker_upsert", markerError);
 
@@ -359,6 +402,19 @@ function workoutName(workout: any): string {
   return `Whoop ${sport}`;
 }
 
+function normalizeWorkout(workout: any): NormalizedWorkout {
+  return {
+    id: workoutId(workout),
+    date: workoutDate(workout),
+    name: workoutName(workout),
+    sportId: workoutSportId(workout),
+    mapping: mapSport(workout),
+    kcal: workoutKcal(workout),
+    minutes: workoutDurationMin(workout),
+    avgHr: workoutAvgHr(workout),
+  };
+}
+
 function workoutDurationMin(workout: any): number | null {
   const start = new Date(workout.start ?? workout.start_time ?? 0).getTime();
   const end = new Date(workout.end ?? workout.end_time ?? 0).getTime();
@@ -381,8 +437,15 @@ function workoutAvgHr(workout: any): number | null {
     null;
 }
 
-function mapSport(workout: any) {
-  const sportId = Number(workout.sport_id ?? workout.sportId ?? 0);
+function workoutSportId(workout: any): number | null {
+  const raw = workout.sport_id ?? workout.sportId;
+  if (raw == null || raw === "") return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function mapSport(workout: any): SportMapping {
+  const sportId = workoutSportId(workout) ?? 0;
   const name = String(workout.sport_name ?? workout.sportName ?? "").toLowerCase();
 
   if (sportId === 48 || sportId === 96 || name.includes("cross") || name.includes("functional")) {
@@ -410,7 +473,104 @@ function mapSport(workout: any) {
   if (sportId === 0 || name.includes("run") || name.includes("corr")) {
     return { kcalField: "kcal_corrida", minField: "min_corrida", bpmField: "bpm_corrida" };
   }
-  return { kcalField: "kcal_outros", minField: null, bpmField: null };
+  return { kcalField: "kcal_outros", minField: "min_outros", bpmField: "bpm_outros" };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function buildImportMetadata(normalized: NormalizedWorkout, current: unknown = {}) {
+  const metadata = isRecord(current) ? current : {};
+  return {
+    ...metadata,
+    date: normalized.date,
+    name: normalized.name,
+    sport_id: normalized.sportId,
+    schema_version: 2,
+    mapping: {
+      kcal_field: normalized.mapping.kcalField,
+      min_field: normalized.mapping.minField,
+      bpm_field: normalized.mapping.bpmField,
+    },
+    normalized: {
+      kcal: normalized.kcal,
+      minutes: normalized.minutes,
+      avg_hr: normalized.avgHr,
+    },
+  };
+}
+
+async function repairLegacyOtherImports(supabaseAdmin: any, userId: string, workouts: any[]) {
+  const ids = workouts.map(workoutId).filter(Boolean);
+  if (ids.length === 0) return 0;
+
+  const { data: importedRows, error } = await supabaseAdmin
+    .from("activity_imports")
+    .select("external_id, metadata")
+    .eq("user_id", userId)
+    .eq("provider", "whoop")
+    .in("external_id", ids);
+  if (error) throw dbError("whoop_imports_select", error);
+
+  const rowsById = new Map<string, { external_id: string; metadata?: unknown }>(
+    (importedRows ?? []).map((row: any) => [String(row.external_id), row])
+  );
+  let repaired = 0;
+
+  for (const workout of workouts) {
+    const normalized = normalizeWorkout(workout);
+    const marker = rowsById.get(normalized.id);
+    if (!marker) continue;
+
+    const schemaVersion = isRecord(marker.metadata) ? marker.metadata.schema_version : undefined;
+    const needsOtherRepair =
+      normalized.mapping.minField === "min_outros" || normalized.mapping.bpmField === "bpm_outros";
+    if (!needsOtherRepair || schemaVersion === 2) continue;
+
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from("daily_logs")
+      .select("min_outros, bpm_outros")
+      .eq("user_id", userId)
+      .eq("date", normalized.date)
+      .maybeSingle();
+    if (existingError) throw dbError("whoop_legacy_daily_log_select", existingError);
+
+    const payload: Record<string, unknown> = { user_id: userId, date: normalized.date };
+    let shouldUpsert = false;
+
+    if (normalized.minutes != null) {
+      payload.min_outros = Number(existing?.min_outros ?? 0) + normalized.minutes;
+      if (normalized.avgHr != null) {
+        payload.bpm_outros = mergeBpm(
+          Number(existing?.bpm_outros ?? 0) || null,
+          Number(existing?.min_outros ?? 0) || null,
+          normalized.avgHr,
+          normalized.minutes
+        );
+      }
+      shouldUpsert = true;
+    }
+
+    if (!shouldUpsert) continue;
+
+    const { error: upsertError } = await supabaseAdmin
+      .from("daily_logs")
+      .upsert(payload, { onConflict: "user_id,date" });
+    if (upsertError) throw dbError("whoop_legacy_daily_log_upsert", upsertError);
+
+    const { error: markerError } = await supabaseAdmin
+      .from("activity_imports")
+      .update({ metadata: buildImportMetadata(normalized, marker.metadata) })
+      .eq("user_id", userId)
+      .eq("provider", "whoop")
+      .eq("external_id", normalized.id);
+    if (markerError) throw dbError("whoop_import_marker_update", markerError);
+
+    repaired++;
+  }
+
+  return repaired;
 }
 
 async function whoopGet(token: string, path: string) {

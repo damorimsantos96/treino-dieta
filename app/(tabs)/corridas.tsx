@@ -38,6 +38,7 @@ import { IntervalType, RunActivity, RunSession } from "@/types";
 import { formatPace, formatDuration } from "@/utils/calculations";
 import { Ionicons } from "@expo/vector-icons";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
+import { ChartTooltip } from "@/components/ui/ChartTooltip";
 
 const CHART_FALLBACK = 320;
 const CHART_LEFT = 34;
@@ -352,6 +353,7 @@ function VolumePaceChart({
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number } | null>(null);
   const data = useMemo(() => buildRunBuckets(activities, from, to, mode), [activities, from, to, mode]);
   if (data.length === 0) return null;
 
@@ -367,7 +369,8 @@ function VolumePaceChart({
   const slotWidth = plotWidth / data.length;
   const barWidth = Math.max(2, Math.min(30, slotWidth * 0.72));
   const activeIndex = hovered ?? selected;
-  const selectedItem = activeIndex == null ? null : data[activeIndex];
+  const selectedItem = selected == null ? null : data[selected];
+  const hoveredItem = hovered == null ? null : data[hovered];
 
   return (
     <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 mb-4 gap-3">
@@ -419,8 +422,19 @@ function VolumePaceChart({
               className="items-center justify-end"
               style={{ width: slotWidth, height: plotHeight }}
               {...({
-                onPointerEnter: () => setHovered(index),
-                onPointerLeave: () => setHovered(null),
+                onPointerMove: (e: any) => {
+                  const x = e.nativeEvent.offsetX ?? e.nativeEvent.locationX ?? 0;
+                  const y = e.nativeEvent.offsetY ?? e.nativeEvent.locationY ?? 0;
+                  setHovered(index);
+                  setTooltip({
+                    x: Math.min(chartWidth - 196, CHART_LEFT + index * slotWidth + x + 12),
+                    y: Math.max(8, CHART_TOP + y - 52),
+                  });
+                },
+                onPointerLeave: () => {
+                  setHovered(null);
+                  setTooltip(null);
+                },
               } as any)}
             >
               <View
@@ -495,6 +509,22 @@ function VolumePaceChart({
             );
           })}
         </View>
+
+        <ChartTooltip
+          visible={hoveredItem != null && tooltip != null}
+          x={tooltip?.x ?? 0}
+          y={tooltip?.y ?? 0}
+        >
+          {hoveredItem && (
+            <View className="gap-0.5">
+              <Text className="text-surface-400 text-[10px]">{hoveredItem.label}</Text>
+              <Text className="text-white text-xs font-bold">
+                {hoveredItem.distance.toFixed(1)} km
+                {hoveredItem.pace ? ` · ${formatPace(hoveredItem.pace)}/km` : ""}
+              </Text>
+            </View>
+          )}
+        </ChartTooltip>
       </View>
 
       {selectedItem && (

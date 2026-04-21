@@ -1,0 +1,3 @@
+ALTER TABLE daily_logs
+  ADD COLUMN IF NOT EXISTS min_outros NUMERIC(6,1),
+  ADD COLUMN IF NOT EXISTS bpm_outros SMALLINT;

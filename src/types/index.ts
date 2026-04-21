@@ -9,6 +9,21 @@ export interface UserProfile {
   updated_at: string;
 }
 
+export interface UserAppSettings {
+  id: string;
+  user_id: string;
+  water_start_time: string;
+  water_end_time: string;
+  water_reminders_enabled: boolean;
+  water_reminder_interval_min: number;
+  health_connect_enabled: boolean;
+  health_connect_background_enabled: boolean;
+  health_connect_last_sync_at: string | null;
+  health_connect_last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DailyLog {
   id: string;
   user_id: string;
@@ -33,6 +48,7 @@ export interface DailyLog {
   min_crossfit: number | null;
   min_musculacao: number | null;
   min_ciclismo: number | null;
+  min_outros: number | null;
   min_sauna: number | null;
 
   // Temperature by activity (°C)
@@ -51,6 +67,7 @@ export interface DailyLog {
   bpm_ciclismo: number | null;
   bpm_crossfit: number | null;
   bpm_musculacao: number | null;
+  bpm_outros: number | null;
   bpm_sauna: number | null;
 
   // Manual input
@@ -160,6 +177,29 @@ export interface RunSummary {
   avg_pace_min_km: number;
   avg_hr: number;
   sessions_count: number;
+}
+
+export interface WaterPreset {
+  id: string;
+  user_id: string;
+  label: string;
+  amount_ml: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WaterIntake {
+  id: string;
+  user_id: string;
+  logged_date: string;
+  occurred_at: string;
+  amount_ml: number;
+  preset_id: string | null;
+  source: string;
+  notes: string | null;
+  created_at: string;
+  preset?: WaterPreset | null;
 }
 
 export interface SyncCandidate {
