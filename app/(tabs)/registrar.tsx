@@ -76,6 +76,7 @@ function NumInput({
   unit,
   placeholder = "0",
   decimal = false,
+  signed = false,
 }: {
   label: string;
   value: string;
@@ -83,27 +84,57 @@ function NumInput({
   unit?: string;
   placeholder?: string;
   decimal?: boolean;
+  signed?: boolean;
 }) {
+  const isNegative = signed && value.startsWith("-");
+  const displayValue = signed ? value.replace(/^-/, "") : value;
+
+  const handleSignedChange = (v: string) => {
+    const clean = v.replace(/[^0-9.]/g, "");
+    onChange(isNegative && clean ? `-${clean}` : clean);
+  };
+
+  const toggleSign = () => {
+    if (!value) return;
+    onChange(isNegative ? value.slice(1) : `-${value}`);
+  };
+
   return (
     <View className="flex-1 gap-1.5" style={{ minWidth: 0 }}>
       <Text className="text-surface-500 text-xs font-semibold">{label}</Text>
-      <View
-        className="flex-row items-center bg-surface-700/50 border border-surface-700 rounded-xl px-3 py-2.5"
-        style={{ minWidth: 0 }}
-      >
-        <TextInput
-          className="flex-1 text-white text-sm"
-          style={{ minWidth: 0, padding: 0 }}
-          value={value}
-          onChangeText={onChange}
-          keyboardType={decimal ? "decimal-pad" : "number-pad"}
-          placeholder={placeholder}
-          placeholderTextColor="#4a4b58"
-          selectTextOnFocus
-        />
-        {unit && (
-          <Text className="text-surface-500 text-xs font-medium ml-1 shrink-0">{unit}</Text>
+      <View className="flex-row gap-1.5" style={{ minWidth: 0 }}>
+        {signed && (
+          <TouchableOpacity
+            onPress={toggleSign}
+            className={`items-center justify-center rounded-xl px-3 border ${
+              isNegative
+                ? "bg-red-500/15 border-red-500/30"
+                : "bg-surface-700/50 border-surface-700"
+            }`}
+          >
+            <Text className={`text-base font-bold ${isNegative ? "text-red-400" : "text-surface-400"}`}>
+              {isNegative ? "−" : "+"}
+            </Text>
+          </TouchableOpacity>
         )}
+        <View
+          className="flex-1 flex-row items-center bg-surface-700/50 border border-surface-700 rounded-xl px-3 py-2.5"
+          style={{ minWidth: 0 }}
+        >
+          <TextInput
+            className="flex-1 text-white text-sm"
+            style={{ minWidth: 0, padding: 0 }}
+            value={signed ? displayValue : value}
+            onChangeText={signed ? handleSignedChange : onChange}
+            keyboardType={decimal ? "decimal-pad" : "number-pad"}
+            placeholder={placeholder}
+            placeholderTextColor="#4a4b58"
+            selectTextOnFocus
+          />
+          {unit && (
+            <Text className="text-surface-500 text-xs font-medium ml-1 shrink-0">{unit}</Text>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -412,6 +443,7 @@ export default function RegistrarScreen() {
               onChange={(v) => set("surplus", v)}
               unit="kcal"
               decimal
+              signed
             />
           </View>
         </View>

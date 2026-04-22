@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -33,6 +33,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { RunActivity } from "@/types";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
+import { useFocusEffect } from "expo-router";
 
 const SCREEN_FALLBACK = 320;
 const CHART_LEFT = 36;
@@ -102,11 +103,13 @@ function SimpleBarChart({
   color = "#10b981",
   height = 120,
   chartWidth = SCREEN_FALLBACK,
+  rightGutter = 8,
 }: {
   data: { label: string; value: number }[];
   color?: string;
   height?: number;
   chartWidth?: number;
+  rightGutter?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
@@ -114,7 +117,7 @@ function SimpleBarChart({
   if (data.length === 0) return null;
 
   const max = Math.max(...data.map((item) => item.value), 1);
-  const plotWidth = Math.max(160, chartWidth - CHART_LEFT - CHART_RIGHT);
+  const plotWidth = Math.max(160, chartWidth - CHART_LEFT - rightGutter);
   const plotHeight = height - CHART_TOP;
   const slotWidth = plotWidth / data.length;
   const barWidth = Math.max(1, Math.min(24, slotWidth * 0.72));
@@ -133,7 +136,7 @@ function SimpleBarChart({
           className="absolute flex-row items-end justify-between overflow-hidden"
           style={{
             left: CHART_LEFT,
-            right: CHART_RIGHT,
+            right: rightGutter,
             top: CHART_TOP,
             height: plotHeight,
           }}
@@ -666,15 +669,22 @@ export default function AnalisesScreen() {
   const now = useMemo(() => new Date(), []);
   const qc = useQueryClient();
 
-  const { data: logs = [], isLoading: loadingLogs } = useQuery({
+  const { data: logs = [], isLoading: loadingLogs, refetch: refetchLogs } = useQuery({
     queryKey: ["daily_logs", period],
     queryFn: () => getDailyLogs(from, now),
   });
 
-  const { data: runs = [], isLoading: loadingRuns } = useQuery({
+  const { data: runs = [], isLoading: loadingRuns, refetch: refetchRuns } = useQuery({
     queryKey: ["run_activities", period],
     queryFn: () => getRunActivities(from, now, 2000),
   });
+
+  useFocusEffect(
+    useCallback(() => {
+      refetchLogs();
+      refetchRuns();
+    }, [])
+  );
 
   const { mutateAsync: saveWeight, isPending: savingWeight } = useMutation({
     mutationFn: (payload: { date: string; weight_kg: number }) => upsertDailyLog(payload),

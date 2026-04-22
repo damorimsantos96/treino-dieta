@@ -306,6 +306,26 @@ export default function ConfiguracoesScreen() {
     }
   }
 
+  async function reimportWhoopActivity(candidate: SyncCandidate) {
+    setWhoopSync("loading");
+    try {
+      const data = await callSyncFunction("whoop", "reimport", [candidate.id]);
+      setWhoopSync("success");
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["daily_log"] }),
+        qc.invalidateQueries({ queryKey: ["daily_logs"] }),
+      ]);
+      const refreshed = await callSyncFunction("whoop", "list");
+      setCandidates((refreshed.candidates ?? []) as SyncCandidate[]);
+      Alert.alert("Whoop", data.message);
+    } catch (err: any) {
+      setWhoopSync("error");
+      Alert.alert("Erro", err.message);
+    } finally {
+      setTimeout(() => setWhoopSync("idle"), 3000);
+    }
+  }
+
   async function reimportGarminActivity(candidate: SyncCandidate) {
     setGarminSync("loading");
     try {
@@ -758,7 +778,7 @@ export default function ConfiguracoesScreen() {
 
       <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2">
         <Text className="text-surface-600 text-xs leading-5">
-          O Whoop preenche atividades no registro diario. O Garmin cria corridas com intervalos. No Garmin, itens ja importados podem ser reimportados para corrigir dados antigos.
+          O Whoop preenche atividades no registro diario. O Garmin cria corridas com intervalos. Itens ja importados podem ser reimportados para corrigir dados (ex: kcal recalculada pelo Whoop).
         </Text>
       </View>
 
@@ -869,8 +889,28 @@ export default function ConfiguracoesScreen() {
                             <Text className="text-white text-sm font-bold flex-1">
                               {candidate.name}
                             </Text>
-                            {candidate.already_imported && !isOutros && (
+                            {candidate.already_imported && !isOutros && syncProvider !== "whoop" && (
                               <Text className="text-brand-400 text-xs font-semibold">Importado</Text>
+                            )}
+                            {candidate.already_imported && !isOutros && syncProvider === "whoop" && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  Alert.alert(
+                                    "Reimportar atividade",
+                                    "Isso vai atualizar os dados desta atividade com os valores mais recentes do Whoop.",
+                                    [
+                                      { text: "Cancelar", style: "cancel" },
+                                      {
+                                        text: "Reimportar",
+                                        onPress: () => reimportWhoopActivity(candidate),
+                                      },
+                                    ]
+                                  );
+                                }}
+                                className="bg-sky-500/15 border border-sky-500/30 rounded-lg px-2 py-1"
+                              >
+                                <Text className="text-sky-300 text-xs font-semibold">Reimportar</Text>
+                              </TouchableOpacity>
                             )}
                             {candidate.already_imported && syncProvider === "garmin" && (
                               <TouchableOpacity

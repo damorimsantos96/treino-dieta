@@ -179,7 +179,10 @@ Deno.serve(async (req) => {
 
     stage = "parse_body";
     const body = await safeJson(req);
-    const mode = body.mode === "import" ? "import" : body.mode === "reclassify" ? "reclassify" : "list";
+    const mode = body.mode === "import" ? "import"
+      : body.mode === "reclassify" ? "reclassify"
+      : body.mode === "reimport" ? "reimport"
+      : "list";
     const selectedIds = new Set<string>(Array.isArray(body.ids) ? body.ids.map(String) : []);
     const overrides: Record<string, ActivityKey> = isRecord(body.overrides)
       ? Object.fromEntries(
@@ -206,6 +209,16 @@ Deno.serve(async (req) => {
     }
 
     const byId = new Map(workouts.map((workout: any) => [workoutId(workout), workout]));
+
+    if (mode === "reimport") {
+      stage = "reimport";
+      const reimported = await reimportWorkouts(supabaseAdmin, user.id, workouts, selectedIds);
+      return json({
+        reimported,
+        repaired,
+        message: `Whoop: ${reimported} atividade(s) reimportada(s).`,
+      });
+    }
 
     if (mode === "reclassify") {
       stage = "reclassify";
@@ -540,6 +553,106 @@ function mappingToKey(mapping: SportMapping): ActivityKey {
 
 function isValidActivityKey(value: unknown): value is ActivityKey {
   return typeof value === "string" && value in ACTIVITY_KEY_TO_MAPPING;
+}
+
+async function reimportWorkouts(
+  supabaseAdmin: any,
+  userId: string,
+  workouts: any[],
+  selectedIds: Set<string>
+) {
+  const byId = new Map(workouts.map((w: any) => [workoutId(w), w]));
+  let reimported = 0;
+
+  for (const id of selectedIds) {
+    const workout = byId.get(id);
+    if (!workout) continue;
+
+    const normalized = normalizeWorkout(workout);
+
+    const { data: marker, error: markerReadError } = await supabaseAdmin
+      .from("activity_imports")
+      .select("metadata")
+      .eq("user_id", userId)
+      .eq("provider", "whoop")
+      .eq("external_id", id)
+      .maybeSingle();
+    if (markerReadError) throw dbError("whoop_reimport_marker_select", markerReadError);
+    if (!marker) continue;
+
+    const meta = isRecord(marker.metadata) ? marker.metadata : {};
+    const storedNorm = isRecord(meta.normalized) ? meta.normalized : null;
+    if (!storedNorm) continue;
+
+    const storedMappingMeta = isRecord(meta.mapping) ? meta.mapping : null;
+    const storedMapping: SportMapping = storedMappingMeta
+      ? {
+          kcalField: String(storedMappingMeta.kcal_field) as KcalField,
+          minField: storedMappingMeta.min_field ? String(storedMappingMeta.min_field) as MinField : null,
+          bpmField: storedMappingMeta.bpm_field ? String(storedMappingMeta.bpm_field) as BpmField : null,
+        }
+      : normalized.mapping;
+
+    const oldKcal = storedNorm.kcal != null ? Number(storedNorm.kcal) : null;
+    const oldMinutes = storedNorm.minutes != null ? Number(storedNorm.minutes) : null;
+
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from("daily_logs")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("date", normalized.date)
+      .maybeSingle();
+    if (existingError) throw dbError("whoop_reimport_daily_log_select", existingError);
+
+    const payload: Record<string, unknown> = { user_id: userId, date: normalized.date };
+
+    if (oldKcal != null) {
+      payload[storedMapping.kcalField] = Math.max(0, Number(existing?.[storedMapping.kcalField] ?? 0) - oldKcal);
+    }
+    if (oldMinutes != null && storedMapping.minField) {
+      payload[storedMapping.minField] = Math.max(0, Number(existing?.[storedMapping.minField] ?? 0) - oldMinutes);
+      if (Number(payload[storedMapping.minField]) === 0 && storedMapping.bpmField) {
+        payload[storedMapping.bpmField] = null;
+      }
+    }
+
+    const newKcal = normalized.kcal;
+    const newMinutes = normalized.minutes;
+    const newAvgHr = normalized.avgHr;
+
+    if (newKcal != null) {
+      payload[storedMapping.kcalField] = Number(payload[storedMapping.kcalField] ?? 0) + newKcal;
+    }
+    if (newMinutes != null && storedMapping.minField) {
+      payload[storedMapping.minField] = Number(payload[storedMapping.minField] ?? 0) + newMinutes;
+    }
+    if (newAvgHr != null && storedMapping.bpmField && storedMapping.minField) {
+      payload[storedMapping.bpmField] = mergeBpm(
+        payload[storedMapping.bpmField] as number | null,
+        oldMinutes,
+        newAvgHr,
+        newMinutes
+      );
+    }
+
+    const { error: upsertError } = await supabaseAdmin
+      .from("daily_logs")
+      .upsert(payload, { onConflict: "user_id,date" });
+    if (upsertError) throw dbError("whoop_reimport_daily_log_upsert", upsertError);
+
+    const reimportedNormalized = { ...normalized, mapping: storedMapping };
+    const { error: markerUpdateError } = await supabaseAdmin
+      .from("activity_imports")
+      .update({ metadata: buildImportMetadata(reimportedNormalized, meta) })
+      .eq("user_id", userId)
+      .eq("provider", "whoop")
+      .eq("external_id", id);
+    if (markerUpdateError) throw dbError("whoop_reimport_marker_update", markerUpdateError);
+
+    reimported++;
+  }
+
+  return reimported;
 }
 
 async function reclassifyWorkouts(
