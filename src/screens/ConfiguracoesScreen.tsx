@@ -895,6 +895,10 @@ export default function ConfiguracoesScreen() {
                             {candidate.already_imported && !isOutros && syncProvider === "whoop" && (
                               <TouchableOpacity
                                 onPress={() => {
+                                  if (Platform.OS === "web") {
+                                    if (window.confirm("Reimportar atividade?\nIsso vai atualizar os dados com os valores mais recentes do Whoop.")) reimportWhoopActivity(candidate);
+                                    return;
+                                  }
                                   Alert.alert(
                                     "Reimportar atividade",
                                     "Isso vai atualizar os dados desta atividade com os valores mais recentes do Whoop.",
@@ -915,6 +919,10 @@ export default function ConfiguracoesScreen() {
                             {candidate.already_imported && syncProvider === "garmin" && (
                               <TouchableOpacity
                                 onPress={() => {
+                                  if (Platform.OS === "web") {
+                                    if (window.confirm("Reimportar corrida?\nIsso vai substituir os intervalos importados anteriormente por essa atividade.")) reimportGarminActivity(candidate);
+                                    return;
+                                  }
                                   Alert.alert(
                                     "Reimportar corrida",
                                     "Isso vai atualizar a corrida Garmin e substituir os intervalos importados anteriormente por essa atividade.",
@@ -937,10 +945,15 @@ export default function ConfiguracoesScreen() {
                                 onPress={() => {
                                   const key = activityOverrides[candidate.id];
                                   if (!key || key === "outros") {
-                                    Alert.alert(
-                                      "Selecione o tipo",
-                                      "Escolha uma atividade abaixo antes de reclassificar."
-                                    );
+                                    if (Platform.OS === "web") {
+                                      window.alert("Escolha uma atividade abaixo antes de reclassificar.");
+                                    } else {
+                                      Alert.alert("Selecione o tipo", "Escolha uma atividade abaixo antes de reclassificar.");
+                                    }
+                                    return;
+                                  }
+                                  if (Platform.OS === "web") {
+                                    if (window.confirm(`Mover para "${ACTIVITY_OPTIONS.find(o => o.key === key)?.label}"?`)) reclassifyWorkout("whoop", candidate.id, key);
                                     return;
                                   }
                                   Alert.alert(
