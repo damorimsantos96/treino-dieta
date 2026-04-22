@@ -308,6 +308,19 @@ function advanceBucket(date: Date, mode: BucketMode) {
   return addYears(date, 1);
 }
 
+function getChartPointLayout(plotWidth: number, count: number, edgePadding = 8) {
+  const safePadding = count > 1 ? Math.min(edgePadding, Math.max(0, (plotWidth - 1) / 2)) : 0;
+  const drawableWidth = Math.max(1, plotWidth - safePadding * 2);
+  const step = count > 1 ? drawableWidth / (count - 1) : 0;
+
+  function getX(index: number) {
+    if (count <= 1) return safePadding + drawableWidth / 2;
+    return safePadding + index * step;
+  }
+
+  return { getX };
+}
+
 function buildRunBuckets(activities: RunActivity[], from: Date, to: Date, mode: BucketMode) {
   const buckets: { label: string; distance: number; pace: number | null }[] = [];
   let cursor = bucketBounds(from, mode).start;
@@ -365,7 +378,7 @@ function VolumePaceChart({
   const paceRange = maxPace - minPace || 1;
   const plotWidth = Math.max(160, chartWidth - CHART_LEFT - CHART_RIGHT);
   const plotHeight = height - CHART_TOP;
-  const pointW = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth;
+  const { getX } = getChartPointLayout(plotWidth, data.length);
   const slotWidth = plotWidth / data.length;
   const barWidth = Math.max(2, Math.min(30, slotWidth * 0.72));
   const activeIndex = hovered ?? selected;
@@ -463,8 +476,8 @@ function VolumePaceChart({
           {data.map((item, index) => {
             if (index === 0 || item.pace == null || data[index - 1].pace == null) return null;
             const prev = data[index - 1].pace!;
-            const x1 = (index - 1) * pointW;
-            const x2 = index * pointW;
+            const x1 = getX(index - 1);
+            const x2 = getX(index);
             const y1 = ((prev - minPace) / paceRange) * (plotHeight - 10) + 5;
             const y2 = ((item.pace - minPace) / paceRange) * (plotHeight - 10) + 5;
             const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);

@@ -45,3 +45,8 @@ scripts/node_modules/
 
 # Supabase local state
 supabase/.temp/
+
+.vercel
+
+# Claude Code local settings (may contain secrets)
+.claude/

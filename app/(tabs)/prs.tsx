@@ -99,6 +99,24 @@ function parseRoundsReps(rounds: string, reps: string, errors: string[]): number
   return r + p / 100;
 }
 
+function getChartPointLayout(plotWidth: number, count: number, edgePadding = 8) {
+  const safePadding = count > 1 ? Math.min(edgePadding, Math.max(0, (plotWidth - 1) / 2)) : 0;
+  const drawableWidth = Math.max(1, plotWidth - safePadding * 2);
+  const step = count > 1 ? drawableWidth / (count - 1) : 0;
+
+  function getX(index: number) {
+    if (count <= 1) return safePadding + drawableWidth / 2;
+    return safePadding + index * step;
+  }
+
+  function getIndex(x: number) {
+    if (count <= 1 || step <= 0) return 0;
+    return Math.max(0, Math.min(count - 1, Math.round((x - safePadding) / step)));
+  }
+
+  return { getX, getIndex };
+}
+
 function MovementCard({
   movement,
   pr,
@@ -201,7 +219,7 @@ function PRAttemptChart({
   const plotWidth = Math.max(160, chartWidth - CHART_L - CHART_R);
   const plotHeight = CHART_H - CHART_T;
   const n = ordered.length;
-  const pointW = n > 1 ? plotWidth / (n - 1) : plotWidth;
+  const { getX, getIndex } = getChartPointLayout(plotWidth, n);
 
   const activeIndex = hovered ?? selected;
   const selectedAttempt = selected != null ? ordered[selected] : null;
@@ -239,8 +257,8 @@ function PRAttemptChart({
           {ordered.map((attempt, index) => {
             if (index === 0) return null;
             const prev = ordered[index - 1];
-            const x1 = (index - 1) * pointW;
-            const x2 = index * pointW;
+            const x1 = getX(index - 1);
+            const x2 = getX(index);
             const y1 = computeCy(prev.value);
             const y2 = computeCy(attempt.value);
             const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
@@ -264,7 +282,7 @@ function PRAttemptChart({
             );
           })}
           {ordered.map((attempt, index) => {
-            const x = index * pointW;
+            const x = getX(index);
             const y = computeCy(attempt.value);
             const isActive = activeIndex === index;
             const r = isActive ? 5 : 3;
@@ -292,16 +310,17 @@ function PRAttemptChart({
           className="absolute"
           style={{ left: CHART_L, right: CHART_R, top: CHART_T, height: plotHeight }}
           onPress={(e) => {
-            const index = Math.max(0, Math.min(n - 1, Math.round(e.nativeEvent.locationX / pointW)));
+            const index = getIndex(e.nativeEvent.locationX);
             setSelected((prev) => prev === index ? null : index);
           }}
           {...({
             onPointerMove: (e: any) => {
               const x = e.nativeEvent.offsetX ?? e.nativeEvent.locationX;
               const y = e.nativeEvent.offsetY ?? e.nativeEvent.locationY ?? 0;
-              setHovered(Math.max(0, Math.min(n - 1, Math.round(x / pointW))));
+              const index = getIndex(x);
+              setHovered(index);
               setTooltip({
-                x: Math.min(chartWidth - 176, CHART_L + x + 12),
+                x: Math.min(chartWidth - 176, CHART_L + getX(index) + 12),
                 y: Math.max(8, CHART_T + y - 44),
               });
             },

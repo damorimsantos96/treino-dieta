@@ -39,6 +39,7 @@ const CHART_LEFT = 36;
 const CHART_RIGHT = 50;
 const CHART_BOTTOM = 24;
 const CHART_TOP = 8;
+const CHART_EDGE_PADDING = 8;
 
 type Period = "30d" | "90d" | "6m" | "1y" | "max";
 
@@ -76,6 +77,24 @@ function movingAverage(values: number[], windowSize: number): number[] {
     const slice = values.slice(Math.max(0, index - windowSize + 1), index + 1);
     return slice.reduce((sum, value) => sum + value, 0) / slice.length;
   });
+}
+
+function getChartPointLayout(plotWidth: number, count: number, edgePadding = CHART_EDGE_PADDING) {
+  const safePadding = count > 1 ? Math.min(edgePadding, Math.max(0, (plotWidth - 1) / 2)) : 0;
+  const drawableWidth = Math.max(1, plotWidth - safePadding * 2);
+  const step = count > 1 ? drawableWidth / (count - 1) : 0;
+
+  function getX(index: number) {
+    if (count <= 1) return safePadding + drawableWidth / 2;
+    return safePadding + index * step;
+  }
+
+  function getIndex(x: number) {
+    if (count <= 1 || step <= 0) return 0;
+    return Math.max(0, Math.min(count - 1, Math.round((x - safePadding) / step)));
+  }
+
+  return { safePadding, drawableWidth, step, getX, getIndex };
 }
 
 function SimpleBarChart({
@@ -205,11 +224,13 @@ function MultiSparkLine({
   series,
   height = 120,
   chartWidth = SCREEN_FALLBACK,
+  rightGutter = CHART_RIGHT,
 }: {
   labels: string[];
   series: { label: string; color: string; data: number[] }[];
   height?: number;
   chartWidth?: number;
+  rightGutter?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
@@ -222,9 +243,9 @@ function MultiSparkLine({
   const max = Math.max(...allValues);
   const range = max - min || 1;
   const maxLength = Math.max(...series.map((item) => item.data.length));
-  const plotWidth = Math.max(160, chartWidth - CHART_LEFT - CHART_RIGHT);
+  const plotWidth = Math.max(160, chartWidth - CHART_LEFT - rightGutter);
   const plotHeight = height - CHART_TOP;
-  const pointW = maxLength > 1 ? plotWidth / (maxLength - 1) : plotWidth;
+  const { getX, getIndex } = getChartPointLayout(plotWidth, maxLength);
   const activeIndex = hovered ?? selected;
   const selectedValues = selected != null
     ? series.map((line) => line.data[selected]).filter(Number.isFinite)
@@ -243,7 +264,7 @@ function MultiSparkLine({
           className="absolute overflow-hidden"
           style={{
             left: CHART_LEFT,
-            right: CHART_RIGHT,
+            right: rightGutter,
             top: CHART_TOP,
             height: plotHeight,
           }}
@@ -252,8 +273,8 @@ function MultiSparkLine({
             line.data.map((value, index) => {
               if (index === 0) return null;
               const previous = line.data[index - 1];
-              const x1 = (index - 1) * pointW;
-              const x2 = index * pointW;
+              const x1 = getX(index - 1);
+              const x2 = getX(index);
               const y1 = plotHeight - ((previous - min) / range) * (plotHeight - 8) - 4;
               const y2 = plotHeight - ((value - min) / range) * (plotHeight - 8) - 4;
               const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
@@ -279,7 +300,7 @@ function MultiSparkLine({
           )}
           {activeIndex != null && series[0]?.data[activeIndex] != null && (() => {
             const value = series[0].data[activeIndex];
-            const cx = activeIndex * pointW;
+            const cx = getX(activeIndex);
             const cy = plotHeight - ((value - min) / range) * (plotHeight - 8) - 4;
             return (
               <View
@@ -301,24 +322,23 @@ function MultiSparkLine({
           className="absolute"
           style={{
             left: CHART_LEFT,
-            right: CHART_RIGHT,
+            right: rightGutter,
             top: CHART_TOP,
             height: plotHeight,
           }}
           onPress={(e) => {
             const x = e.nativeEvent.locationX;
-            const index = Math.round(x / pointW);
-            const clamped = Math.max(0, Math.min(maxLength - 1, index));
+            const clamped = getIndex(x);
             setSelected((prev) => prev === clamped ? null : clamped);
           }}
           {...({
             onPointerMove: (e: any) => {
               const x = e.nativeEvent.offsetX ?? e.nativeEvent.locationX;
               const y = e.nativeEvent.offsetY ?? e.nativeEvent.locationY ?? 0;
-              const index = Math.max(0, Math.min(maxLength - 1, Math.round(x / pointW)));
+              const index = getIndex(x);
               setHovered(index);
               setTooltip({
-                x: Math.min(chartWidth - 196, CHART_LEFT + x + 12),
+                x: Math.min(chartWidth - 196, CHART_LEFT + getX(index) + 12),
                 y: Math.max(8, CHART_TOP + y - 52),
               });
             },
@@ -349,7 +369,7 @@ function MultiSparkLine({
         </ChartTooltip>
         <View
           className="absolute bottom-0 flex-row justify-between"
-          style={{ left: CHART_LEFT, right: CHART_RIGHT }}
+          style={{ left: CHART_LEFT, right: rightGutter }}
         >
           {[0, Math.floor(labels.length / 2), labels.length - 1].map((index) => (
             <Text key={`${labels[index]}-${index}`} className="text-surface-600 text-[10px]">
@@ -464,7 +484,7 @@ function RunVolumePaceChart({
   const paceRange = maxPace - minPace || 1;
   const plotWidth = Math.max(160, chartWidth - CHART_LEFT - CHART_RIGHT);
   const plotHeight = height - CHART_TOP;
-  const pointW = data.length > 1 ? plotWidth / (data.length - 1) : plotWidth;
+  const { getX } = getChartPointLayout(plotWidth, data.length);
   const slotWidth = plotWidth / data.length;
   const barWidth = Math.max(2, Math.min(26, slotWidth * 0.72));
   const activeIndex = hovered ?? selected;
@@ -551,8 +571,8 @@ function RunVolumePaceChart({
           {data.map((item, index) => {
             if (index === 0 || item.pace == null || data[index - 1].pace == null) return null;
             const previous = data[index - 1].pace!;
-            const x1 = (index - 1) * pointW;
-            const x2 = index * pointW;
+            const x1 = getX(index - 1);
+            const x2 = getX(index);
             const y1 = ((previous - minPace) / paceRange) * (plotHeight - 10) + 5;
             const y2 = ((item.pace - minPace) / paceRange) * (plotHeight - 10) + 5;
             const len = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
@@ -821,6 +841,7 @@ export default function AnalisesScreen() {
                   labels={weightLabels}
                   chartWidth={chartWidth}
                   series={visibleWeightSeries}
+                  rightGutter={8}
                 />
                 <View className="flex-row flex-wrap gap-2">
                   {[

@@ -186,7 +186,7 @@ export default function ConfiguracoesScreen() {
 
   async function callSyncFunction(
     provider: "whoop" | "garmin",
-    mode: "list" | "import" | "reclassify",
+    mode: "list" | "import" | "reclassify" | "reimport",
     ids: string[] = [],
     overrides: Record<string, ActivityKey> = {}
   ) {
@@ -303,6 +303,28 @@ export default function ConfiguracoesScreen() {
       Alert.alert("Erro", err.message);
     } finally {
       setTimeout(() => setState("idle"), 3000);
+    }
+  }
+
+  async function reimportGarminActivity(candidate: SyncCandidate) {
+    setGarminSync("loading");
+    try {
+      const data = await callSyncFunction("garmin", "reimport", [candidate.id]);
+      setGarminSync("success");
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["daily_log"] }),
+        qc.invalidateQueries({ queryKey: ["daily_logs"] }),
+        qc.invalidateQueries({ queryKey: ["run_activities"] }),
+        qc.invalidateQueries({ queryKey: ["run_sessions"] }),
+      ]);
+      const refreshed = await callSyncFunction("garmin", "list");
+      setCandidates((refreshed.candidates ?? []) as SyncCandidate[]);
+      Alert.alert("Garmin", data.message);
+    } catch (err: any) {
+      setGarminSync("error");
+      Alert.alert("Erro", err.message);
+    } finally {
+      setTimeout(() => setGarminSync("idle"), 3000);
     }
   }
 
@@ -736,7 +758,7 @@ export default function ConfiguracoesScreen() {
 
       <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2">
         <Text className="text-surface-600 text-xs leading-5">
-          O Whoop preenche atividades no registro diario. O Garmin cria corridas com intervalos. Itens ja importados aparecem travados na selecao.
+          O Whoop preenche atividades no registro diario. O Garmin cria corridas com intervalos. No Garmin, itens ja importados podem ser reimportados para corrigir dados antigos.
         </Text>
       </View>
 
@@ -777,7 +799,7 @@ export default function ConfiguracoesScreen() {
             </TouchableOpacity>
           </View>
           <Text className="text-surface-500 text-xs leading-5">
-            Selecione somente o que deseja importar. Itens ja importados ficam marcados.
+            Selecione somente o que deseja importar. No Garmin, itens ja importados continuam marcados e podem ser reimportados.
           </Text>
           {candidates.length > 0 && (
             <View className="flex-row items-center justify-between gap-3">
@@ -849,6 +871,26 @@ export default function ConfiguracoesScreen() {
                             </Text>
                             {candidate.already_imported && !isOutros && (
                               <Text className="text-brand-400 text-xs font-semibold">Importado</Text>
+                            )}
+                            {candidate.already_imported && syncProvider === "garmin" && (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  Alert.alert(
+                                    "Reimportar corrida",
+                                    "Isso vai atualizar a corrida Garmin e substituir os intervalos importados anteriormente por essa atividade.",
+                                    [
+                                      { text: "Cancelar", style: "cancel" },
+                                      {
+                                        text: "Reimportar",
+                                        onPress: () => reimportGarminActivity(candidate),
+                                      },
+                                    ]
+                                  );
+                                }}
+                                className="bg-sky-500/15 border border-sky-500/30 rounded-lg px-2 py-1"
+                              >
+                                <Text className="text-sky-300 text-xs font-semibold">Reimportar</Text>
+                              </TouchableOpacity>
                             )}
                             {candidate.already_imported && isOutros && syncProvider === "whoop" && (
                               <TouchableOpacity

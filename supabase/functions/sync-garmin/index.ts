@@ -4,6 +4,7 @@
  * POST body:
  *   { "mode": "list" }
  *   { "mode": "import", "ids": ["activity-id"] }
+ *   { "mode": "reimport", "ids": ["activity-id"] }
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -246,7 +247,11 @@ Deno.serve(async (req) => {
 
     stage = "parse_body";
     const body = await safeJson(req);
-    const mode = body.mode === "import" ? "import" : "list";
+    const mode = body.mode === "import"
+      ? "import"
+      : body.mode === "reimport"
+      ? "reimport"
+      : "list";
     const selectedIds = new Set<string>(Array.isArray(body.ids) ? body.ids.map(String) : []);
 
     stage = "garmin_session";
@@ -301,7 +306,7 @@ Deno.serve(async (req) => {
     const touchedDates = new Set<string>();
 
     for (const candidate of selected) {
-      if (candidate.already_imported) continue;
+      if (mode === "import" && candidate.already_imported) continue;
       const activity = byId.get(candidate.id);
       if (!activity) continue;
       stage = "import_activity";
@@ -318,7 +323,9 @@ Deno.serve(async (req) => {
     return json({
       imported,
       skipped: selected.length - imported,
-      message: `Garmin: ${imported} corridas importadas.`,
+      message: mode === "reimport"
+        ? `Garmin: ${imported} corridas reimportadas.`
+        : `Garmin: ${imported} corridas importadas.`,
     });
   } catch (err) {
     return fail(err, { provider: "garmin", requestId, stage });

@@ -1,5 +1,5 @@
 /**
- * One-time historical import from "../Dieta e Treino.xlsx".
+ * One-time historical import from "Dieta e Treino.xlsx" (na raiz do projeto).
  *
  * This parser is intentionally header/worksheet-aware. The original importer
  * drifted by two columns and read "Musculacao kcal" as body weight.
@@ -17,7 +17,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const XLSX_PATH = resolve(__dirname, "../../Dieta e Treino.xlsx");
+const XLSX_PATH = resolve(__dirname, "../Dieta e Treino.xlsx");
 const USER_EMAIL = process.env.USER_EMAIL;
 const USER_ID = process.env.USER_ID;
 const SERVICE_KEY =
