@@ -198,6 +198,22 @@
 - When touching schema assumptions, read the matching migration before changing TS types.
 - Always run `git status` before modifying anything; treat uncommitted changes as user work unless confirmed otherwise.
 
+## After Every Change — Mandatory Steps
+After implementing any change, always complete all applicable steps before reporting done:
+
+1. **Commit** the changed files with a descriptive message.
+2. **Push** to `origin/master`.
+3. **Deploy/update** based on what changed:
+   - JS or asset change → `npm run update:preview` (OTA; user reopens app).
+   - Edge Function change → `npm run deploy:<function>` (already done during dev, but verify).
+   - Native/SDK/permission change → new EAS build required; notify Diego to reinstall APK.
+4. Tell Diego in one line what was deployed and what action (if any) he needs to take.
+
+## Response Style
+- Be as concise as possible. Deliver the same information with the fewest words.
+- No preambles ("I'll now…", "Let me…"). No closing summaries ("In summary…", "I've updated…").
+- State what changed and what to do next — nothing else.
+
 ## Communicating Deploys to the User
 
 After deploying, always tell Diego clearly which type was deployed and what he needs to do:

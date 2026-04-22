@@ -575,18 +575,26 @@ function normalizeLaps(laps: any[], date: string, activityIdValue: string, activ
 }
 
 function shouldSkipTrailingSummaryLap(intervals: any[], activityDistanceKm: number): boolean {
-  if (intervals.length <= 1 || activityDistanceKm <= 0) return false;
+  if (intervals.length <= 1) return false;
 
   const lastInterval = intervals[intervals.length - 1];
   const durationMin = lastInterval?.duration_min ?? 0;
   const distanceKm = lastInterval?.distance_km ?? 0;
   const hasPace = typeof lastInterval?.pace_min_km === "number" && Number.isFinite(lastInterval.pace_min_km);
-  const distanceToleranceKm = Math.max(0.1, activityDistanceKm * 0.01);
 
-  // Garmin occasionally appends a zero-duration summary lap that mirrors the run total.
-  return durationMin === 0 &&
-    !hasPace &&
-    Math.abs(distanceKm - activityDistanceKm) <= distanceToleranceKm;
+  if (durationMin !== 0 || hasPace) return false;
+
+  // A zero-duration lap with any non-trivial distance is physically impossible — it is a
+  // Garmin summary/artifact entry. A real accidental lap-button press would have ~0 distance.
+  if (distanceKm > 0.1) return true;
+
+  // Zero-duration, near-zero distance: skip if it mirrors the activity total.
+  if (activityDistanceKm > 0) {
+    const distanceToleranceKm = Math.max(0.1, activityDistanceKm * 0.01);
+    return Math.abs(distanceKm - activityDistanceKm) <= distanceToleranceKm;
+  }
+
+  return false;
 }
 
 function classifyLap(lap: any): string {

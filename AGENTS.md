@@ -171,6 +171,22 @@
 - When changing schema assumptions, read the corresponding migration first and then align TS types and API code.
 - If editing a large screen file, minimize formatting churn.
 
+## After Every Change — Mandatory Steps
+After implementing any change, always complete all applicable steps before reporting done:
+
+1. **Commit** the changed files with a descriptive message.
+2. **Push** to `origin/master`.
+3. **Deploy/update** based on what changed:
+   - JS or asset change → `npm run update:preview` (OTA; user reopens app).
+   - Edge Function change → `npm run deploy:<function>` (already done during dev, but verify).
+   - Native/SDK/permission change → new EAS build required; notify Diego to reinstall APK.
+4. Tell Diego in one line what was deployed and what action (if any) he needs to take.
+
+## Response Style
+- Be as concise as possible. Deliver the same information with the fewest words.
+- No preambles ("I'll now…", "Let me…"). No closing summaries ("In summary…", "I've updated…").
+- State what changed and what to do next — nothing else.
+
 ## Fast Debug Paths
 - Login or network issue: inspect `src/lib/supabase.ts`, `.env.local`, `app.json`, then run `npm run check:supabase`.
 - Build issue: run `npm run check:build-env` and `npm run typecheck`.
