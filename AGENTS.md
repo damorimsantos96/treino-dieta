@@ -62,6 +62,8 @@
 - `app.json` also contains Supabase values under `expo.extra`; the app may still boot without `.env.local`.
 - `scripts/import-excel.mjs` expects service-role credentials in `scripts/.env`.
 - Edge Functions depend on secrets configured in the Supabase project environment.
+- `.env.local` contains `EXPO_TOKEN`. Always read it and pass it as an env var before running EAS/Expo CLI commands — do not ask Diego to run them manually.
+  - Pattern: `EXPO_TOKEN=$(grep EXPO_TOKEN .env.local | cut -d= -f2) eas update --channel preview --platform android --environment preview --message "..."`
 
 ## App Structure
 - `app/_layout.tsx` wires QueryClient, auth bootstrap, updates, automation, and notifications.

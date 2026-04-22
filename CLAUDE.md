@@ -42,6 +42,7 @@
 - `app.json` also contains Supabase URL/key under `expo.extra`; config works without `.env.local`.
 - Edge functions require Supabase secrets plus provider secrets in the Supabase project env.
 - `scripts/import-excel.mjs` needs service role credentials in `scripts/.env`.
+- `.env.local` also contains `EXPO_TOKEN` — use it directly (e.g. `EXPO_TOKEN=$(grep EXPO_TOKEN .env.local | cut -d= -f2) eas ...`) before asking Diego to run any EAS or Expo CLI command.
 
 ## Navigation Map
 - `app/_layout.tsx` — wires QueryClient, auth session bootstrap, updates, automation, notification channel.
