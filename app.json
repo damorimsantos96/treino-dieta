@@ -67,8 +67,8 @@
       "typedRoutes": true
     },
     "extra": {
-      "supabaseUrl": "SUPABASE_URL_REDACTED",
-      "supabaseAnonKey": "SUPABASE_KEY_REDACTED",
+      "supabaseUrl": "",
+      "supabaseAnonKey": "",
       "router": {},
       "eas": {
         "projectId": "baf0da1c-34c1-4e97-a621-96c2146928ae"

@@ -50,3 +50,6 @@ supabase/.temp/
 
 # Claude Code local settings (may contain secrets)
 .claude/
+
+# Planilha de dados históricos pessoais
+Dieta e Treino.xlsx
