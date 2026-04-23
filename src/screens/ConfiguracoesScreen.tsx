@@ -127,6 +127,14 @@ async function extractFunctionError(error: any): Promise<string> {
   return error?.message ?? "Sincronizacao falhou.";
 }
 
+function showAlert(title: string, message?: string) {
+  if (Platform.OS === "web") {
+    window.alert(message ? `${title}\n\n${message}` : title);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
 export default function ConfiguracoesScreen() {
   const { signOut, user } = useAuthStore();
   const { isAvailable, isEnabled, enableBiometrics, disableBiometrics } = useBiometrics();
@@ -208,17 +216,16 @@ export default function ConfiguracoesScreen() {
     try {
       const data = await callSyncFunction(provider, "reclassify", [id], { [id]: key });
       setState("success");
-      Alert.alert(provider === "whoop" ? "Whoop" : "Garmin", data.message);
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["daily_log"] }),
         qc.invalidateQueries({ queryKey: ["daily_logs"] }),
       ]);
-      // Refresh the candidates list with the updated state
       const refreshed = await callSyncFunction(provider, "list");
       setCandidates((refreshed.candidates ?? []) as SyncCandidate[]);
+      showAlert(provider === "whoop" ? "Whoop" : "Garmin", data.message);
     } catch (err: any) {
       setState("error");
-      Alert.alert("Erro", err.message);
+      showAlert("Erro", err.message);
     } finally {
       setTimeout(() => setState("idle"), 3000);
     }
@@ -317,10 +324,10 @@ export default function ConfiguracoesScreen() {
       ]);
       const refreshed = await callSyncFunction("whoop", "list");
       setCandidates((refreshed.candidates ?? []) as SyncCandidate[]);
-      Alert.alert("Whoop", data.message);
+      showAlert("Whoop", data.message);
     } catch (err: any) {
       setWhoopSync("error");
-      Alert.alert("Erro", err.message);
+      showAlert("Erro", err.message);
     } finally {
       setTimeout(() => setWhoopSync("idle"), 3000);
     }
@@ -339,10 +346,10 @@ export default function ConfiguracoesScreen() {
       ]);
       const refreshed = await callSyncFunction("garmin", "list");
       setCandidates((refreshed.candidates ?? []) as SyncCandidate[]);
-      Alert.alert("Garmin", data.message);
+      showAlert("Garmin", data.message);
     } catch (err: any) {
       setGarminSync("error");
-      Alert.alert("Erro", err.message);
+      showAlert("Erro", err.message);
     } finally {
       setTimeout(() => setGarminSync("idle"), 3000);
     }
