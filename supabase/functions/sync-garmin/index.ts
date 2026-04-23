@@ -567,8 +567,9 @@ function normalizeLaps(laps: any[], date: string, activityIdValue: string, activ
     };
   });
 
-  if (shouldSkipTrailingSummaryLap(normalized, activityDistanceKm)) {
-    return normalized.slice(0, -1);
+  // Remove trailing artifact laps in a loop — Garmin occasionally appends more than one.
+  while (normalized.length > 1 && shouldSkipTrailingSummaryLap(normalized, activityDistanceKm)) {
+    normalized.pop();
   }
 
   return normalized;
@@ -577,21 +578,29 @@ function normalizeLaps(laps: any[], date: string, activityIdValue: string, activ
 function shouldSkipTrailingSummaryLap(intervals: any[], activityDistanceKm: number): boolean {
   if (intervals.length <= 1) return false;
 
-  const lastInterval = intervals[intervals.length - 1];
-  const durationMin = lastInterval?.duration_min ?? 0;
-  const distanceKm = lastInterval?.distance_km ?? 0;
-  const hasPace = typeof lastInterval?.pace_min_km === "number" && Number.isFinite(lastInterval.pace_min_km);
+  const last = intervals[intervals.length - 1];
+  const durationMin: number = last?.duration_min ?? 0;
+  const distanceKm: number = last?.distance_km ?? 0;
+  const pace: number | null = last?.pace_min_km ?? null;
 
-  if (durationMin !== 0 || hasPace) return false;
+  // Near-zero distance is harmless regardless of duration — keep it.
+  if (distanceKm <= 0.05) return false;
 
-  // A zero-duration lap with any non-trivial distance is physically impossible — it is a
-  // Garmin summary/artifact entry. A real accidental lap-button press would have ~0 distance.
-  if (distanceKm > 0.1) return true;
+  // Zero duration with non-trivial distance is physically impossible.
+  if (durationMin === 0) return true;
 
-  // Zero-duration, near-zero distance: skip if it mirrors the activity total.
+  // Pace below 1 min/km (> 60 km/h) is physically impossible for a running lap.
+  // This catches summary laps where Garmin stores a small real duration (e.g. 2.4s cooldown)
+  // but an inflated distance field — resulting in an absurd computed pace.
+  if (pace !== null && Number.isFinite(pace) && pace < 1.0) return true;
+
+  // Preceding laps already account for the full activity distance: this lap is an artifact.
+  // Extra guard: artifact must be disproportionately large (> 30% of activity total) to
+  // avoid dropping a legitimate short finishing segment.
   if (activityDistanceKm > 0) {
-    const distanceToleranceKm = Math.max(0.1, activityDistanceKm * 0.01);
-    return Math.abs(distanceKm - activityDistanceKm) <= distanceToleranceKm;
+    const precedingKm = intervals.slice(0, -1).reduce((s: number, i: any) => s + (i.distance_km ?? 0), 0);
+    const tolerance = Math.max(0.15, activityDistanceKm * 0.02);
+    if (precedingKm >= activityDistanceKm - tolerance && distanceKm > activityDistanceKm * 0.3) return true;
   }
 
   return false;
