@@ -31,10 +31,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   createRunActivityWithIntervals,
   deleteRunActivity,
+  getDailyLogs,
   getRunActivities,
   syncRunSessionsToDaily,
 } from "@/lib/api";
-import { IntervalType, RunActivity, RunSession } from "@/types";
+import { DailyLog, IntervalType, RunActivity, RunSession } from "@/types";
 import { formatPace, formatDuration } from "@/utils/calculations";
 import { Ionicons } from "@expo/vector-icons";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
@@ -147,6 +148,26 @@ function averageHr(activities: RunActivity[]): number | null {
   return weight > 0 ? Math.round(weighted / weight) : null;
 }
 
+function averageThermalSensation(activities: RunActivity[]): number | null {
+  let weighted = 0;
+  let weight = 0;
+  for (const activity of activities) {
+    if (activity.thermal_sensation_c == null) continue;
+    const duration = activityDuration(activity) || 1;
+    weighted += activity.thermal_sensation_c * duration;
+    weight += duration;
+  }
+  return weight > 0 ? Math.round((weighted / weight) * 10) / 10 : null;
+}
+
+function formatTemperature(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  const text = Number.isInteger(rounded)
+    ? rounded.toFixed(0)
+    : rounded.toFixed(1).replace(".", ",");
+  return `${text}°C`;
+}
+
 function IntervalRow({ interval }: { interval: RunSession }) {
   const type = (interval.interval_type as IntervalType) ?? "Outro";
   const color = INTERVAL_COLORS[type] ?? INTERVAL_COLORS.Outro;
@@ -186,17 +207,21 @@ function IntervalRow({ interval }: { interval: RunSession }) {
 function DayCard({
   date,
   activities,
+  dayLog,
   onDelete,
 }: {
   date: string;
   activities: RunActivity[];
+  dayLog?: DailyLog | null;
   onDelete: (id: string, date: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const totalKm = activities.reduce((sum, item) => sum + activityDistance(item), 0);
   const totalDuration = activities.reduce((sum, item) => sum + activityDuration(item), 0);
-  const totalKcal = activities.reduce((sum, item) => sum + (item.calories_kcal ?? 0), 0);
+  const totalKcalFromActivities = activities.reduce((sum, item) => sum + (item.calories_kcal ?? 0), 0);
+  const totalKcal = totalKcalFromActivities > 0 ? totalKcalFromActivities : (dayLog?.kcal_corrida ?? 0);
   const avgHr = averageHr(activities);
+  const avgThermal = averageThermalSensation(activities);
   const avgPace = totalKm > 0 && totalDuration > 0 ? totalDuration / totalKm : null;
   const totalIntervals = activities.reduce((sum, item) => sum + (item.intervals?.length ?? 0), 0);
   const dateLabel = format(parseISO(date), "d 'de' MMM", { locale: ptBR });
@@ -242,6 +267,7 @@ function DayCard({
         {totalDuration > 0 && <Text className="text-surface-500 text-xs">{formatDuration(totalDuration)}</Text>}
         {avgPace && <Text className="text-surface-500 text-xs">{formatPace(avgPace)}/km</Text>}
         {avgHr && <Text className="text-surface-500 text-xs">{avgHr} bpm</Text>}
+        {avgThermal != null && <Text className="text-surface-500 text-xs">{formatTemperature(avgThermal)}</Text>}
         {totalKcal > 0 && <Text className="text-surface-500 text-xs">{Math.round(totalKcal)} kcal</Text>}
       </View>
 
@@ -572,6 +598,15 @@ export default function CorridasScreen() {
     queryKey: ["run_activities", period],
     queryFn: () => getRunActivities(from, new Date(), 1000),
   });
+  const {
+    data: logs = [],
+    isLoading: loadingLogs,
+    refetch: refetchLogs,
+    isRefetching: refetchingLogs,
+  } = useQuery({
+    queryKey: ["daily_logs", period],
+    queryFn: () => getDailyLogs(from, to),
+  });
 
   const { mutateAsync: save, isPending: saving } = useMutation({
     mutationFn: (payload: Parameters<typeof createRunActivityWithIntervals>) =>
@@ -616,6 +651,10 @@ export default function CorridasScreen() {
   const sortedDates = useMemo(
     () => Object.keys(grouped).sort((a, b) => b.localeCompare(a)),
     [grouped]
+  );
+  const logsByDate = useMemo(
+    () => Object.fromEntries(logs.map((log) => [log.date, log])),
+    [logs]
   );
 
   async function handleSave() {
@@ -688,7 +727,16 @@ export default function CorridasScreen() {
       <ScrollView
         stickyHeaderIndices={[0]}
         contentContainerClassName="px-4 pt-6 pb-8"
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#10b981" />}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefetching || refetchingLogs}
+            onRefresh={() => {
+              refetch();
+              refetchLogs();
+            }}
+            tintColor="#10b981"
+          />
+        }
       >
         <View className="bg-surface-900 pb-4">
           <View className="flex-row justify-between items-center mb-4">
@@ -744,7 +792,7 @@ export default function CorridasScreen() {
           </View>
         </View>
 
-        {isLoading ? (
+        {isLoading || loadingLogs ? (
           <ActivityIndicator color="#10b981" size="large" className="mt-12" />
         ) : (
           <>
@@ -753,7 +801,13 @@ export default function CorridasScreen() {
               <VolumePaceChart activities={activities} from={from} to={to} mode={bucketMode} chartWidth={chartWidth} />
             )}
             {sortedDates.map((date) => (
-              <DayCard key={date} date={date} activities={grouped[date]} onDelete={handleDelete} />
+              <DayCard
+                key={date}
+                date={date}
+                activities={grouped[date]}
+                dayLog={logsByDate[date]}
+                onDelete={handleDelete}
+              />
             ))}
             {activities.length === 0 && (
               <View className="items-center py-16 gap-3">
