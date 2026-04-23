@@ -17,6 +17,7 @@ import { useDailyLog, useUpsertDailyLog } from "@/hooks/useDailyLog";
 import { useUserMetrics } from "@/hooks/useUserProfile";
 import { DailyLog } from "@/types";
 import { SectionLabel } from "@/components/ui/Card";
+import { ProviderSyncPanel } from "@/components/ProviderSyncPanel";
 import { computeDailyCalculations, formatWater } from "@/utils/calculations";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -528,6 +529,10 @@ export default function RegistrarScreen() {
               </View>
             )
           )}
+
+          <View className="border-t border-surface-700/50 pt-3 gap-2">
+            <ProviderSyncPanel />
+          </View>
         </View>
 
         {/* ── Sauna (colapsável) ────────────────────────── */}
