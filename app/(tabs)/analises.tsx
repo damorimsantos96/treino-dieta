@@ -662,7 +662,7 @@ function StatRow({ label, value, valueColor }: { label: string; value: string; v
 export default function AnalisesScreen() {
   const [period, setPeriod] = useState<Period>("90d");
   const [chartWidth, setChartWidth] = useState(SCREEN_FALLBACK);
-  const [maVisible, setMaVisible] = useState({ mm7: true, mm14: false, mm30: false });
+  const [maVisible, setMaVisible] = useState({ peso: true, mm7: true, mm14: false, mm30: false });
   const [tableOpen, setTableOpen] = useState(false);
   const [editingWeight, setEditingWeight] = useState<{ date: string; dateStr: string; weight: string; isNew?: boolean } | null>(null);
   const from = periodToDate(period);
@@ -709,6 +709,7 @@ export default function AnalisesScreen() {
   const mm14 = movingAverage(weightData, 14);
   const mm30 = movingAverage(weightData, 30);
   const visibleWeightSeries = [
+    maVisible.peso ? { label: "Peso", color: "#94a3b8", data: weightData } : null,
     maVisible.mm7 ? { label: "MM7", color: "#10b981", data: mm7 } : null,
     maVisible.mm14 ? { label: "MM14", color: "#38bdf8", data: mm14 } : null,
     maVisible.mm30 ? { label: "MM30", color: "#a78bfa", data: mm30 } : null,
@@ -855,6 +856,7 @@ export default function AnalisesScreen() {
                 />
                 <View className="flex-row flex-wrap gap-2">
                   {[
+                    { key: "peso" as const, label: "Peso", color: "#94a3b8" },
                     { key: "mm7" as const, label: "MM7", color: "#10b981" },
                     { key: "mm14" as const, label: "MM14", color: "#38bdf8" },
                     { key: "mm30" as const, label: "MM30", color: "#a78bfa" },
