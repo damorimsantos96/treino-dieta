@@ -430,6 +430,9 @@ export default function PRsScreen() {
   });
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyMovementId, setHistoryMovementId] = useState<string | null>(null);
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyDropdownOpen, setHistoryDropdownOpen] = useState(false);
 
   const prMap = new Map<string, PRAttempt>();
   attempts.filter((a) => a.is_pr).forEach((a) => prMap.set(a.movement_id, a));
@@ -441,6 +444,21 @@ export default function PRsScreen() {
     () => attempts.filter((attempt) => attempt.movement_id === selectedHistoryMovement?.id),
     [attempts, selectedHistoryMovement?.id]
   );
+  const filteredMovements = useMemo(() => {
+    const q = globalSearch.trim().toLowerCase();
+    if (!q) return movements;
+    return movements.filter((m) => m.name.toLowerCase().includes(q));
+  }, [movements, globalSearch]);
+  const historySuggestions = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    if (!q) return [];
+    return movements.filter((m) => m.name.toLowerCase().includes(q));
+  }, [movements, historySearch]);
+  const nameSuggestions = useMemo(() => {
+    const q = newMovementForm.name.trim().toLowerCase();
+    if (!q) return [];
+    return movements.filter((m) => m.name.toLowerCase().includes(q));
+  }, [movements, newMovementForm.name]);
 
   async function handleSeedDefaults() {
     Alert.alert(
@@ -516,43 +534,62 @@ export default function PRsScreen() {
   return (
     <View className="flex-1 bg-surface-900">
       <ScrollView stickyHeaderIndices={[0]} contentContainerClassName="px-4 pt-6 pb-8">
-        <View className="flex-row justify-between items-center mb-5 bg-surface-900 pb-3">
-          <View>
-            <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
-              Seus recordes
-            </Text>
-            <Text className="text-white text-3xl font-bold tracking-tight">PRs</Text>
-          </View>
-          <View className="flex-row gap-2">
-            {movements.length === 0 && (
+        <View className="bg-surface-900 pb-3">
+          <View className="flex-row justify-between items-center mb-3">
+            <View>
+              <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
+                Seus recordes
+              </Text>
+              <Text className="text-white text-3xl font-bold tracking-tight">PRs</Text>
+            </View>
+            <View className="flex-row gap-2">
+              {movements.length === 0 && (
+                <TouchableOpacity
+                  className="bg-surface-700 border border-surface-600/40 rounded-xl px-3 py-2.5"
+                  onPress={handleSeedDefaults}
+                >
+                  <Text className="text-surface-400 text-xs font-semibold">Padrão</Text>
+                </TouchableOpacity>
+              )}
+              {movements.length > 0 && (
+                <TouchableOpacity
+                  className="bg-surface-700 border border-surface-600/40 rounded-xl px-3 py-2.5"
+                  onPress={() => recalc()}
+                  disabled={recalcPending}
+                >
+                  {recalcPending ? (
+                    <ActivityIndicator size="small" color="#72737f" />
+                  ) : (
+                    <Ionicons name="refresh-outline" size={16} color="#72737f" />
+                  )}
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
-                className="bg-surface-700 border border-surface-600/40 rounded-xl px-3 py-2.5"
-                onPress={handleSeedDefaults}
+                className="bg-brand-500 rounded-xl px-4 py-2.5"
+                onPress={() => setShowAddMovement(true)}
+                style={{ shadowColor: "#10b981", shadowOpacity: 0.25, shadowRadius: 8, elevation: 3 }}
               >
-                <Text className="text-surface-400 text-xs font-semibold">Padrão</Text>
+                <Text className="text-white font-bold text-sm">+ Novo</Text>
               </TouchableOpacity>
-            )}
-            {movements.length > 0 && (
-              <TouchableOpacity
-                className="bg-surface-700 border border-surface-600/40 rounded-xl px-3 py-2.5"
-                onPress={() => recalc()}
-                disabled={recalcPending}
-              >
-                {recalcPending ? (
-                  <ActivityIndicator size="small" color="#72737f" />
-                ) : (
-                  <Ionicons name="refresh-outline" size={16} color="#72737f" />
-                )}
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              className="bg-brand-500 rounded-xl px-4 py-2.5"
-              onPress={() => setShowAddMovement(true)}
-              style={{ shadowColor: "#10b981", shadowOpacity: 0.25, shadowRadius: 8, elevation: 3 }}
-            >
-              <Text className="text-white font-bold text-sm">+ Novo</Text>
-            </TouchableOpacity>
+            </View>
           </View>
+          {movements.length > 0 && (
+            <View className="flex-row items-center bg-surface-800 border border-surface-700/60 rounded-2xl px-3">
+              <Ionicons name="search-outline" size={16} color="#72737f" />
+              <TextInput
+                className="flex-1 text-white py-3 px-2 text-sm"
+                placeholder="Buscar PR..."
+                placeholderTextColor="#4a4b58"
+                value={globalSearch}
+                onChangeText={setGlobalSearch}
+              />
+              {globalSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setGlobalSearch("")}>
+                  <Ionicons name="close-circle" size={16} color="#72737f" />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
 
         {movements.length > 0 && (
@@ -578,28 +615,76 @@ export default function PRsScreen() {
 
             {historyOpen && (
               <>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View className="flex-row gap-2">
-                    {movements.map((movement) => {
-                      const active = selectedHistoryMovement?.id === movement.id;
-                      return (
+                {/* Search input */}
+                <View className="flex-row items-center bg-surface-700/50 border border-surface-600/30 rounded-xl px-3">
+                  <Ionicons name="search-outline" size={14} color="#72737f" />
+                  <TextInput
+                    className="flex-1 text-white py-2.5 px-2 text-sm"
+                    placeholder="Buscar movimento..."
+                    placeholderTextColor="#4a4b58"
+                    value={historySearch}
+                    onChangeText={(v) => { setHistorySearch(v); setHistoryDropdownOpen(false); }}
+                  />
+                  {historySearch.length > 0 && (
+                    <TouchableOpacity onPress={() => setHistorySearch("")}>
+                      <Ionicons name="close-circle" size={15} color="#72737f" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Search suggestions */}
+                {historySearch.trim().length > 0 && (
+                  <View className="bg-surface-700/60 border border-surface-600/30 rounded-xl overflow-hidden">
+                    {historySuggestions.length === 0 ? (
+                      <Text className="text-surface-500 text-xs px-3 py-2.5">Nenhum resultado</Text>
+                    ) : (
+                      historySuggestions.map((m, i) => (
                         <TouchableOpacity
-                          key={movement.id}
-                          className={`px-3 py-2 rounded-lg border ${
-                            active
-                              ? "bg-brand-500/15 border-brand-500/30"
-                              : "bg-surface-700/50 border-surface-600/40"
-                          }`}
-                          onPress={() => setHistoryMovementId(movement.id)}
+                          key={m.id}
+                          className={`px-3 py-2.5 flex-row items-center justify-between ${i < historySuggestions.length - 1 ? "border-b border-surface-700/40" : ""}`}
+                          onPress={() => { setHistoryMovementId(m.id); setHistorySearch(""); }}
                         >
-                          <Text className={`text-xs font-semibold ${active ? "text-brand-400" : "text-surface-500"}`}>
-                            {movement.name}
-                          </Text>
+                          <Text className="text-white text-sm">{m.name}</Text>
+                          {m.category ? <Text className="text-surface-500 text-xs">{m.category}</Text> : null}
                         </TouchableOpacity>
-                      );
-                    })}
+                      ))
+                    )}
                   </View>
-                </ScrollView>
+                )}
+
+                {/* Dropdown selector */}
+                <TouchableOpacity
+                  className="flex-row items-center justify-between bg-surface-700/40 border border-surface-600/30 rounded-xl px-3 py-2.5"
+                  onPress={() => { setHistoryDropdownOpen((v) => !v); setHistorySearch(""); }}
+                >
+                  <Text className="text-white text-sm font-medium flex-1 mr-2" numberOfLines={1}>
+                    {selectedHistoryMovement?.name ?? "Selecione um movimento"}
+                  </Text>
+                  <Ionicons name={historyDropdownOpen ? "chevron-up" : "chevron-down"} size={14} color="#72737f" />
+                </TouchableOpacity>
+
+                {historyDropdownOpen && (
+                  <View className="bg-surface-700/60 border border-surface-600/30 rounded-xl overflow-hidden" style={{ maxHeight: 192 }}>
+                    <ScrollView nestedScrollEnabled>
+                      {movements.map((m, i) => {
+                        const active = selectedHistoryMovement?.id === m.id;
+                        return (
+                          <TouchableOpacity
+                            key={m.id}
+                            className={`px-3 py-2.5 flex-row items-center justify-between ${i < movements.length - 1 ? "border-b border-surface-700/40" : ""} ${active ? "bg-brand-500/10" : ""}`}
+                            onPress={() => { setHistoryMovementId(m.id); setHistoryDropdownOpen(false); }}
+                          >
+                            <Text className={`text-sm flex-1 mr-2 ${active ? "text-brand-400 font-semibold" : "text-white"}`} numberOfLines={1}>
+                              {m.name}
+                            </Text>
+                            {active && <Ionicons name="checkmark" size={14} color="#10b981" />}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+
                 <PRAttemptChart
                   movement={selectedHistoryMovement}
                   attempts={selectedHistoryAttempts}
@@ -631,8 +716,13 @@ export default function PRsScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+        ) : filteredMovements.length === 0 ? (
+          <View className="items-center py-10 gap-2">
+            <Ionicons name="search-outline" size={32} color="#4a4b58" />
+            <Text className="text-surface-500 text-sm">Nenhum PR encontrado para "{globalSearch}"</Text>
+          </View>
         ) : (
-          movements.map((m) => (
+          filteredMovements.map((m) => (
             <MovementCard
               key={m.id}
               movement={m}
@@ -767,13 +857,34 @@ export default function PRsScreen() {
         scroll
       >
               <Text className="text-white text-xl font-bold">Novo movimento</Text>
-              <TextInput
-                className={inputStyle}
-                value={newMovementForm.name}
-                onChangeText={(v) => setNewMovementForm((f) => ({ ...f, name: v }))}
-                placeholder="Nome (ex: Karen, Deadlift 1RM)"
-                placeholderTextColor={placeholderColor}
-              />
+              <View className="gap-0">
+                <TextInput
+                  className={inputStyle}
+                  value={newMovementForm.name}
+                  onChangeText={(v) => setNewMovementForm((f) => ({ ...f, name: v }))}
+                  placeholder="Nome (ex: Karen, Deadlift 1RM)"
+                  placeholderTextColor={placeholderColor}
+                  autoCorrect={false}
+                />
+                {nameSuggestions.length > 0 && (
+                  <View className="bg-surface-700/80 border border-amber-500/20 rounded-b-xl overflow-hidden -mt-1 pt-1">
+                    <View className="flex-row items-center gap-1.5 px-3 pt-1 pb-1">
+                      <Ionicons name="warning-outline" size={12} color="#f59e0b" />
+                      <Text className="text-amber-500 text-[10px] font-semibold uppercase tracking-wider">Já existe</Text>
+                    </View>
+                    {nameSuggestions.slice(0, 5).map((m, i) => (
+                      <TouchableOpacity
+                        key={m.id}
+                        className={`px-3 py-2.5 flex-row items-center justify-between ${i < Math.min(nameSuggestions.length, 5) - 1 ? "border-b border-surface-600/30" : ""}`}
+                        onPress={() => setNewMovementForm((f) => ({ ...f, name: m.name }))}
+                      >
+                        <Text className="text-white text-sm">{m.name}</Text>
+                        {m.category ? <Text className="text-surface-500 text-xs">{m.category}</Text> : null}
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
               <TextInput
                 className={inputStyle}
                 value={newMovementForm.category}
