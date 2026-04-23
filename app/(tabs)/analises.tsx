@@ -820,34 +820,33 @@ export default function AnalisesScreen() {
 
   return (
     <>
-    <ScrollView
-      className="flex-1 bg-surface-900"
-      stickyHeaderIndices={[0]}
-      contentContainerClassName="px-4 pt-6 pb-10 gap-5"
-    >
-      <View className="bg-surface-900 pb-4">
-        <View className="mb-4">
-          <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
-            Tendencias
-          </Text>
-          <Text className="text-white text-3xl font-bold tracking-tight">Analises</Text>
-        </View>
-
-        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1">
-          {PERIODS.map(({ key, label }) => (
-            <TouchableOpacity
-              key={key}
-              className={`flex-1 py-2 rounded-xl items-center ${period === key ? "bg-brand-500" : ""}`}
-              onPress={() => setPeriod(key)}
-            >
-              <Text className={`text-sm font-bold ${period === key ? "text-white" : "text-surface-500"}`}>
-                {label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+    <View className="bg-surface-900 px-4 pt-6 pb-4">
+      <View className="mb-4">
+        <Text className="text-surface-500 text-xs font-semibold uppercase tracking-widest">
+          Tendencias
+        </Text>
+        <Text className="text-white text-3xl font-bold tracking-tight">Analises</Text>
       </View>
 
+      <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-1.5 flex-row gap-1">
+        {PERIODS.map(({ key, label }) => (
+          <TouchableOpacity
+            key={key}
+            className={`flex-1 py-2 rounded-xl items-center ${period === key ? "bg-brand-500" : ""}`}
+            onPress={() => setPeriod(key)}
+          >
+            <Text className={`text-sm font-bold ${period === key ? "text-white" : "text-surface-500"}`}>
+              {label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+
+    <ScrollView
+      className="flex-1 bg-surface-900"
+      contentContainerClassName="px-4 pt-2 pb-10 gap-5"
+    >
       <View
         onLayout={(e) => {
           const w = e.nativeEvent.layout.width;
