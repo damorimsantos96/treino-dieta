@@ -17,7 +17,7 @@ import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 type SyncState = "idle" | "loading" | "success" | "error";
 
 const ACTIVITY_OPTIONS: { key: ActivityKey; label: string }[] = [
-  { key: "musculacao", label: "Musculação" },
+  { key: "musculacao", label: "MusculaÃ§Ã£o" },
   { key: "crossfit", label: "CrossFit" },
   { key: "boxe", label: "Boxe" },
   { key: "surf", label: "Surf" },
@@ -258,63 +258,57 @@ export function ProviderSyncPanel() {
       {/* Whoop */}
       <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2">
         <View className="flex-row items-center gap-3">
-          <Text className="text-xl">⌚</Text>
-          <View className="flex-1">
-            <Text className="text-white font-medium">Whoop</Text>
-            <Text className="text-surface-600 text-xs mt-0.5">
-              Conecta via OAuth e lista atividades recentes para importar kcal, tempo e FC media
-            </Text>
-          </View>
-          {whoopSync === "loading" && <ActivityIndicator size="small" color="#22c55e" />}
-        </View>
-        <View className="flex-row gap-2 mt-3">
-          <TouchableOpacity
-            className="flex-1 bg-surface-700 rounded-xl py-3 items-center"
-            onPress={connectWhoop}
-            disabled={whoopSync === "loading"}
-          >
-            <Text className="text-white font-bold text-sm">Conectar</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            className="flex-1 bg-brand-500 rounded-xl py-3 items-center"
-            onPress={() => previewSync("whoop")}
-            disabled={whoopSync === "loading"}
-          >
-            <Text className="text-white font-bold text-sm">
-              {whoopSync === "success" ? "Feito" : whoopSync === "error" ? "Falhou" : "Verificar"}
-            </Text>
-          </TouchableOpacity>
+          <Text className="text-xl">âŒš</Text>
+          <Text className="text-white font-medium flex-1">Whoop</Text>
+          {whoopSync === "loading" ? (
+            <ActivityIndicator size="small" color="#22c55e" />
+          ) : (
+            <View className="flex-row items-center gap-3">
+              <TouchableOpacity onPress={connectWhoop}>
+                <Text className="text-surface-400 text-sm font-semibold">Conectar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => previewSync("whoop")}>
+                <Text
+                  className={`text-sm font-semibold ${
+                    whoopSync === "error" ? "text-red-400" : "text-brand-400"
+                  }`}
+                >
+                  {whoopSync === "success" ? "Feito" : whoopSync === "error" ? "Falhou" : "Verificar"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
 
       {/* Garmin */}
-      <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2 flex-row items-center gap-3">
-        <Text className="text-xl">🏃</Text>
-        <View className="flex-1">
-          <Text className="text-white font-medium">Garmin Connect</Text>
-          <Text className="text-surface-600 text-xs mt-0.5">
-            Lista corridas e importa intervalos sem kcal duplicada
-          </Text>
+      <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2">
+        <View className="flex-row items-center gap-3">
+          <Text className="text-xl">ðŸƒ</Text>
+          <Text className="text-white font-medium flex-1">Garmin Connect</Text>
+          {garminSync === "loading" ? (
+            <ActivityIndicator size="small" color="#22c55e" />
+          ) : (
+            <TouchableOpacity onPress={() => previewSync("garmin")}>
+              <Text
+                className={`text-sm font-semibold ${
+                  garminSync === "error" ? "text-red-400" : "text-brand-400"
+                }`}
+              >
+                {garminSync === "success" ? "Feito" : garminSync === "error" ? "Falhou" : "Verificar"}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
-        {garminSync === "loading" ? (
-          <ActivityIndicator size="small" color="#22c55e" />
-        ) : (
-          <TouchableOpacity onPress={() => previewSync("garmin")}>
-            <Text
-              className={`text-sm font-semibold ${
-                garminSync === "error" ? "text-red-400" : "text-brand-400"
-              }`}
-            >
-              {garminSync === "success" ? "✓ Feito" : garminSync === "error" ? "Falhou" : "Verificar"}
-            </Text>
-          </TouchableOpacity>
-        )}
       </View>
 
       {/* Modal de candidatos */}
       <BottomSheetModal
         visible={!!syncProvider}
-        onClose={() => { setSyncProvider(null); setActivityOverrides({}); }}
+        onClose={() => {
+          setSyncProvider(null);
+          setActivityOverrides({});
+        }}
         scroll
         maxHeight="82%"
       >
@@ -365,8 +359,8 @@ export function ProviderSyncPanel() {
                     candidate.already_imported
                       ? "bg-surface-700/40 border-surface-700"
                       : selected
-                      ? "bg-brand-500/10 border-brand-500/30"
-                      : "bg-surface-700/50 border-surface-700"
+                        ? "bg-brand-500/10 border-brand-500/30"
+                        : "bg-surface-700/50 border-surface-700"
                   }`}
                 >
                   <TouchableOpacity
@@ -389,7 +383,7 @@ export function ProviderSyncPanel() {
                         }`}
                       >
                         {(selected || candidate.already_imported) && (
-                          <Text className="text-white text-xs font-bold">✓</Text>
+                          <Text className="text-white text-xs font-bold">âœ“</Text>
                         )}
                       </View>
                       <View className="flex-1">
@@ -455,12 +449,12 @@ export function ProviderSyncPanel() {
                                   return;
                                 }
                                 if (Platform.OS === "web") {
-                                  if (window.confirm(`Mover para "${ACTIVITY_OPTIONS.find(o => o.key === key)?.label}"?`)) reclassifyWorkout("whoop", candidate.id, key);
+                                  if (window.confirm(`Mover para "${ACTIVITY_OPTIONS.find((o) => o.key === key)?.label}"?`)) reclassifyWorkout("whoop", candidate.id, key);
                                   return;
                                 }
                                 Alert.alert(
                                   "Reclassificar atividade",
-                                  `Mover para "${ACTIVITY_OPTIONS.find(o => o.key === key)?.label}"?`,
+                                  `Mover para "${ACTIVITY_OPTIONS.find((o) => o.key === key)?.label}"?`,
                                   [
                                     { text: "Cancelar", style: "cancel" },
                                     { text: "Reclassificar", onPress: () => reclassifyWorkout("whoop", candidate.id, key) },
