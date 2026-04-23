@@ -176,13 +176,16 @@
 ## After Every Change — Mandatory Steps
 After implementing any change, always complete all applicable steps before reporting done:
 
-1. **Commit** the changed files with a descriptive message.
-2. **Push** to `origin/master`.
-3. **Deploy/update** based on what changed:
+1. **Create a branch** specific to the work before starting any `feat`, `fix`, `docs`, or `security` change.
+2. **Commit** the changed files with a descriptive message on that branch.
+3. **Merge** the finished branch into `master`.
+4. **Push** `master` to `origin/master`.
+5. **Delete** the branch created for that work after the merge is complete.
+6. **Deploy/update** based on what changed:
    - JS or asset change → `npm run update:preview` (OTA; user reopens app).
    - Edge Function change → `npm run deploy:<function>` (already done during dev, but verify).
    - Native/SDK/permission change → new EAS build required; notify Diego to reinstall APK.
-4. Tell Diego in one line what was deployed and what action (if any) he needs to take.
+7. Tell Diego in one line what was deployed and what action (if any) he needs to take.
 
 ## Response Style
 - Be as concise as possible. Deliver the same information with the fewest words.
