@@ -82,6 +82,67 @@ function PresetButton({
   );
 }
 
+function HydrationIdealBar({
+  consumedMl,
+  expectedMl,
+  targetMl,
+}: {
+  consumedMl: number;
+  expectedMl: number;
+  targetMl: number;
+}) {
+  const safeTarget = Math.max(targetMl, 1);
+  const consumedPct = Math.min(1, consumedMl / safeTarget);
+  const expectedPct = Math.min(1, expectedMl / safeTarget);
+
+  return (
+    <View className="gap-2">
+      <View className="flex-row items-center justify-between">
+        <Text className="text-surface-500 text-[11px] font-semibold uppercase tracking-wider">
+          Consumo real vs ideal
+        </Text>
+        <View className="flex-row items-center gap-3">
+          <View className="flex-row items-center gap-1.5">
+            <View className="h-2.5 w-2.5 rounded-full bg-brand-400" />
+            <Text className="text-surface-400 text-xs">Real</Text>
+          </View>
+          <View className="flex-row items-center gap-1.5">
+            <View className="h-3 w-[3px] rounded-full bg-amber-300" />
+            <Text className="text-surface-400 text-xs">Ideal</Text>
+          </View>
+        </View>
+      </View>
+      <View className="relative h-3 rounded-full overflow-hidden bg-surface-800">
+        <View
+          className="h-full rounded-full bg-brand-400"
+          style={{ width: `${consumedPct * 100}%` }}
+        >
+          <View
+            className="absolute left-0 right-0 top-0 rounded-full"
+            style={{ height: "50%", backgroundColor: "rgba(255,255,255,0.16)" }}
+          />
+        </View>
+        <View
+          className="absolute top-[-2px] bottom-[-2px] w-1 rounded-full border border-surface-900"
+          style={{
+            left: `${Math.max(0, Math.min(100, expectedPct * 100))}%`,
+            marginLeft: -2,
+            backgroundColor: "#fcd34d",
+          }}
+        />
+      </View>
+      <View className="flex-row justify-between items-center">
+        <Text className="text-surface-500 text-xs">
+          {formatWater(consumedMl)} consumidos
+        </Text>
+        <Text className="text-surface-500 text-xs">
+          Ideal agora: {formatWater(expectedMl)}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 export default function AguaScreen() {
   const queryClient = useQueryClient();
   const today = new Date();
@@ -369,6 +430,11 @@ export default function AguaScreen() {
                     ? `Voce esta ${formatWater(Math.abs(hydrationStatus.deltaMl))} abaixo do esperado neste momento.`
                     : "Voce esta acompanhando o ritmo ideal de hidratacao."}
                 </Text>
+                <HydrationIdealBar
+                  consumedMl={consumedMl}
+                  expectedMl={hydrationStatus.expectedMl}
+                  targetMl={targetMl}
+                />
                 <Text className="text-surface-500 text-xs">
                   Janela configurada: {effectiveSettings.water_start_time} - {effectiveSettings.water_end_time}
                 </Text>
