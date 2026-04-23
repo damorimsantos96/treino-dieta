@@ -491,6 +491,8 @@ export default function RegistrarScreen() {
             })}
           </View>
 
+          <ProviderSyncPanel variant="compact" />
+
           {ACTIVITIES.filter(({ key }) => selectedActivities.has(key)).map(
             ({ key, label, icon, hasTempBpm }) => (
               <View key={key} className="border-t border-surface-700/50 pt-3 gap-2">
@@ -529,10 +531,6 @@ export default function RegistrarScreen() {
               </View>
             )
           )}
-
-          <View className="border-t border-surface-700/50 pt-3 gap-2">
-            <ProviderSyncPanel />
-          </View>
         </View>
 
         {/* ── Sauna (colapsável) ────────────────────────── */}

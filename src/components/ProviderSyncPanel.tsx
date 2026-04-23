@@ -9,15 +9,27 @@ import {
   Platform,
   Linking,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { ActivityKey, SyncCandidate } from "@/types";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 
 type SyncState = "idle" | "loading" | "success" | "error";
+type ProviderName = "whoop" | "garmin";
+type ProviderSyncPanelProps = {
+  variant?: "full" | "compact";
+};
+
+type ProviderConfig = {
+  compactLabel: string;
+  fullLabel: string;
+  description: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+};
 
 const ACTIVITY_OPTIONS: { key: ActivityKey; label: string }[] = [
-  { key: "musculacao", label: "MusculaÃ§Ã£o" },
+  { key: "musculacao", label: "Musculacao" },
   { key: "crossfit", label: "CrossFit" },
   { key: "boxe", label: "Boxe" },
   { key: "surf", label: "Surf" },
@@ -25,6 +37,21 @@ const ACTIVITY_OPTIONS: { key: ActivityKey; label: string }[] = [
   { key: "corrida", label: "Corrida" },
   { key: "outros", label: "Outros" },
 ];
+
+const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
+  whoop: {
+    compactLabel: "Whoop",
+    fullLabel: "Whoop",
+    description: "Conecta via OAuth e lista atividades recentes para importar kcal, tempo e FC media",
+    icon: "watch-outline",
+  },
+  garmin: {
+    compactLabel: "Garmin",
+    fullLabel: "Garmin Connect",
+    description: "Lista corridas e importa intervalos sem kcal duplicada",
+    icon: "speedometer-outline",
+  },
+};
 
 function formatCandidateMeta(candidate: SyncCandidate): string {
   const parts = [
@@ -74,17 +101,45 @@ function showAlert(title: string, message?: string) {
   }
 }
 
-export function ProviderSyncPanel() {
+function getProviderState(
+  provider: ProviderName,
+  whoopSync: SyncState,
+  garminSync: SyncState
+): SyncState {
+  return provider === "whoop" ? whoopSync : garminSync;
+}
+
+function getCompactCardClasses(state: SyncState): string {
+  if (state === "success") return "bg-brand-500/10 border-brand-500/30";
+  if (state === "error") return "bg-red-500/10 border-red-500/30";
+  return "bg-surface-700/50 border-surface-700";
+}
+
+function getCompactTextClasses(state: SyncState): string {
+  if (state === "success") return "text-brand-300";
+  if (state === "error") return "text-red-300";
+  return "text-white";
+}
+
+function getIconColor(state: SyncState): string {
+  if (state === "success") return "#34d399";
+  if (state === "error") return "#f87171";
+  return "#a1a1aa";
+}
+
+export function ProviderSyncPanel({ variant = "full" }: ProviderSyncPanelProps) {
   const qc = useQueryClient();
   const [whoopSync, setWhoopSync] = useState<SyncState>("idle");
   const [garminSync, setGarminSync] = useState<SyncState>("idle");
-  const [syncProvider, setSyncProvider] = useState<"whoop" | "garmin" | null>(null);
+  const [syncProvider, setSyncProvider] = useState<ProviderName | null>(null);
   const [candidates, setCandidates] = useState<SyncCandidate[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activityOverrides, setActivityOverrides] = useState<Record<string, ActivityKey>>({});
 
-  const importableCandidates = candidates.filter((c) => !c.already_imported);
-  const selectedImportableCount = importableCandidates.filter((c) => selectedIds.has(c.id)).length;
+  const importableCandidates = candidates.filter((candidate) => !candidate.already_imported);
+  const selectedImportableCount = importableCandidates.filter((candidate) =>
+    selectedIds.has(candidate.id)
+  ).length;
   const allImportableSelected =
     importableCandidates.length > 0 && selectedImportableCount === importableCandidates.length;
 
@@ -92,12 +147,12 @@ export function ProviderSyncPanel() {
     setSelectedIds(
       allImportableSelected
         ? new Set()
-        : new Set(importableCandidates.map((c) => c.id))
+        : new Set(importableCandidates.map((candidate) => candidate.id))
     );
   }
 
   async function callSyncFunction(
-    provider: "whoop" | "garmin",
+    provider: ProviderName,
     mode: "list" | "import" | "reclassify" | "reimport",
     ids: string[] = [],
     overrides: Record<string, ActivityKey> = {}
@@ -131,7 +186,7 @@ export function ProviderSyncPanel() {
     }
   }
 
-  async function previewSync(provider: "whoop" | "garmin") {
+  async function previewSync(provider: ProviderName) {
     const setState = provider === "whoop" ? setWhoopSync : setGarminSync;
     setState("loading");
     try {
@@ -159,7 +214,7 @@ export function ProviderSyncPanel() {
   async function importSelected() {
     if (!syncProvider) return;
     const ids = Array.from(selectedIds).filter((id) =>
-      candidates.some((c) => c.id === id && !c.already_imported)
+      candidates.some((candidate) => candidate.id === id && !candidate.already_imported)
     );
     if (ids.length === 0) {
       Alert.alert("Nada selecionado", "Escolha pelo menos um item novo para importar.");
@@ -232,7 +287,7 @@ export function ProviderSyncPanel() {
     }
   }
 
-  async function reclassifyWorkout(provider: "whoop" | "garmin", id: string, key: ActivityKey) {
+  async function reclassifyWorkout(provider: ProviderName, id: string, key: ActivityKey) {
     const setState = provider === "whoop" ? setWhoopSync : setGarminSync;
     setState("loading");
     try {
@@ -253,16 +308,47 @@ export function ProviderSyncPanel() {
     }
   }
 
-  return (
-    <>
-      {/* Whoop */}
-      <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2">
+  function renderCompactCard(provider: ProviderName) {
+    const state = getProviderState(provider, whoopSync, garminSync);
+    const config = PROVIDER_CONFIG[provider];
+
+    return (
+      <TouchableOpacity
+        key={provider}
+        onPress={() => previewSync(provider)}
+        disabled={state === "loading"}
+        className={`flex-1 min-w-[140px] rounded-xl border px-3.5 py-3 ${getCompactCardClasses(state)}`}
+      >
+        <View className="flex-row items-center gap-2.5">
+          <View className="w-8 h-8 rounded-full bg-surface-800 items-center justify-center">
+            <Ionicons name={config.icon} size={16} color={getIconColor(state)} />
+          </View>
+          <Text className={`flex-1 text-sm font-semibold ${getCompactTextClasses(state)}`}>
+            {config.compactLabel}
+          </Text>
+          {state === "loading" && <ActivityIndicator size="small" color="#22c55e" />}
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  function renderFullRow(provider: ProviderName) {
+    const state = getProviderState(provider, whoopSync, garminSync);
+    const config = PROVIDER_CONFIG[provider];
+
+    return (
+      <View key={provider} className="bg-surface-800 rounded-2xl px-4 py-3 mb-2">
         <View className="flex-row items-center gap-3">
-          <Text className="text-xl">âŒš</Text>
-          <Text className="text-white font-medium flex-1">Whoop</Text>
-          {whoopSync === "loading" ? (
+          <View className="w-9 h-9 rounded-full bg-surface-700/70 items-center justify-center">
+            <Ionicons name={config.icon} size={18} color={getIconColor(state)} />
+          </View>
+          <View className="flex-1">
+            <Text className="text-white font-medium">{config.fullLabel}</Text>
+            <Text className="text-surface-600 text-xs mt-0.5">{config.description}</Text>
+          </View>
+          {state === "loading" ? (
             <ActivityIndicator size="small" color="#22c55e" />
-          ) : (
+          ) : provider === "whoop" ? (
             <View className="flex-row items-center gap-3">
               <TouchableOpacity onPress={connectWhoop}>
                 <Text className="text-surface-400 text-sm font-semibold">Conectar</Text>
@@ -270,39 +356,43 @@ export function ProviderSyncPanel() {
               <TouchableOpacity onPress={() => previewSync("whoop")}>
                 <Text
                   className={`text-sm font-semibold ${
-                    whoopSync === "error" ? "text-red-400" : "text-brand-400"
+                    state === "error" ? "text-red-400" : "text-brand-400"
                   }`}
                 >
-                  {whoopSync === "success" ? "Feito" : whoopSync === "error" ? "Falhou" : "Verificar"}
+                  {state === "success" ? "Feito" : state === "error" ? "Falhou" : "Verificar"}
                 </Text>
               </TouchableOpacity>
             </View>
-          )}
-        </View>
-      </View>
-
-      {/* Garmin */}
-      <View className="bg-surface-800 rounded-2xl px-4 py-3 mb-2">
-        <View className="flex-row items-center gap-3">
-          <Text className="text-xl">ðŸƒ</Text>
-          <Text className="text-white font-medium flex-1">Garmin Connect</Text>
-          {garminSync === "loading" ? (
-            <ActivityIndicator size="small" color="#22c55e" />
           ) : (
             <TouchableOpacity onPress={() => previewSync("garmin")}>
               <Text
                 className={`text-sm font-semibold ${
-                  garminSync === "error" ? "text-red-400" : "text-brand-400"
+                  state === "error" ? "text-red-400" : "text-brand-400"
                 }`}
               >
-                {garminSync === "success" ? "Feito" : garminSync === "error" ? "Falhou" : "Verificar"}
+                {state === "success" ? "Feito" : state === "error" ? "Falhou" : "Verificar"}
               </Text>
             </TouchableOpacity>
           )}
         </View>
       </View>
+    );
+  }
 
-      {/* Modal de candidatos */}
+  return (
+    <>
+      {variant === "compact" ? (
+        <View className="flex-row flex-wrap gap-2">
+          {renderCompactCard("whoop")}
+          {renderCompactCard("garmin")}
+        </View>
+      ) : (
+        <>
+          {renderFullRow("whoop")}
+          {renderFullRow("garmin")}
+        </>
+      )}
+
       <BottomSheetModal
         visible={!!syncProvider}
         onClose={() => {
@@ -344,9 +434,7 @@ export function ProviderSyncPanel() {
 
         <ScrollView className="max-h-[360px]">
           {candidates.length === 0 ? (
-            <Text className="text-surface-500 text-sm py-8 text-center">
-              Nenhum item encontrado.
-            </Text>
+            <Text className="text-surface-500 text-sm py-8 text-center">Nenhum item encontrado.</Text>
           ) : (
             candidates.map((candidate) => {
               const selected = selectedIds.has(candidate.id);
@@ -383,7 +471,7 @@ export function ProviderSyncPanel() {
                         }`}
                       >
                         {(selected || candidate.already_imported) && (
-                          <Text className="text-white text-xs font-bold">âœ“</Text>
+                          <Ionicons name="checkmark" size={12} color="#ffffff" />
                         )}
                       </View>
                       <View className="flex-1">
@@ -398,7 +486,9 @@ export function ProviderSyncPanel() {
                             <TouchableOpacity
                               onPress={() => {
                                 if (Platform.OS === "web") {
-                                  if (window.confirm("Reimportar atividade?\nIsso vai atualizar os dados com os valores mais recentes do Whoop.")) reimportWhoopActivity(candidate);
+                                  if (window.confirm("Reimportar atividade?\nIsso vai atualizar os dados com os valores mais recentes do Whoop.")) {
+                                    reimportWhoopActivity(candidate);
+                                  }
                                   return;
                                 }
                                 Alert.alert(
@@ -419,7 +509,9 @@ export function ProviderSyncPanel() {
                             <TouchableOpacity
                               onPress={() => {
                                 if (Platform.OS === "web") {
-                                  if (window.confirm("Reimportar corrida?\nIsso vai substituir os intervalos importados anteriormente por essa atividade.")) reimportGarminActivity(candidate);
+                                  if (window.confirm("Reimportar corrida?\nIsso vai substituir os intervalos importados anteriormente por essa atividade.")) {
+                                    reimportGarminActivity(candidate);
+                                  }
                                   return;
                                 }
                                 Alert.alert(
@@ -444,26 +536,37 @@ export function ProviderSyncPanel() {
                                   if (Platform.OS === "web") {
                                     window.alert("Escolha uma atividade abaixo antes de reclassificar.");
                                   } else {
-                                    Alert.alert("Selecione o tipo", "Escolha uma atividade abaixo antes de reclassificar.");
+                                    Alert.alert(
+                                      "Selecione o tipo",
+                                      "Escolha uma atividade abaixo antes de reclassificar."
+                                    );
                                   }
                                   return;
                                 }
+                                const label = ACTIVITY_OPTIONS.find((option) => option.key === key)?.label;
                                 if (Platform.OS === "web") {
-                                  if (window.confirm(`Mover para "${ACTIVITY_OPTIONS.find((o) => o.key === key)?.label}"?`)) reclassifyWorkout("whoop", candidate.id, key);
+                                  if (window.confirm(`Mover para "${label}"?`)) {
+                                    reclassifyWorkout("whoop", candidate.id, key);
+                                  }
                                   return;
                                 }
                                 Alert.alert(
                                   "Reclassificar atividade",
-                                  `Mover para "${ACTIVITY_OPTIONS.find((o) => o.key === key)?.label}"?`,
+                                  `Mover para "${label}"?`,
                                   [
                                     { text: "Cancelar", style: "cancel" },
-                                    { text: "Reclassificar", onPress: () => reclassifyWorkout("whoop", candidate.id, key) },
+                                    {
+                                      text: "Reclassificar",
+                                      onPress: () => reclassifyWorkout("whoop", candidate.id, key),
+                                    },
                                   ]
                                 );
                               }}
                               className="bg-amber-500/15 border border-amber-500/30 rounded-lg px-2 py-1"
                             >
-                              <Text className="text-amber-300 text-xs font-semibold">Reclassificar</Text>
+                              <Text className="text-amber-300 text-xs font-semibold">
+                                Reclassificar
+                              </Text>
                             </TouchableOpacity>
                           )}
                         </View>
@@ -486,8 +589,8 @@ export function ProviderSyncPanel() {
                             <TouchableOpacity
                               key={option.key}
                               onPress={() =>
-                                setActivityOverrides((prev) => ({
-                                  ...prev,
+                                setActivityOverrides((previous) => ({
+                                  ...previous,
                                   [candidate.id]: option.key,
                                 }))
                               }
