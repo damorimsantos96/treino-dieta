@@ -34,6 +34,7 @@ import { RunActivity } from "@/types";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
 import { useFocusEffect } from "expo-router";
+import { AdvancedRunAnalysisSection } from "@/components/AdvancedRunAnalysis";
 
 const SCREEN_FALLBACK = 320;
 const CHART_LEFT = 36;
@@ -680,6 +681,7 @@ export default function AnalisesScreen() {
   const [chartWidth, setChartWidth] = useState(SCREEN_FALLBACK);
   const [maVisible, setMaVisible] = useState({ peso: true, mm7: true, mm14: false, mm30: false });
   const [tableOpen, setTableOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [editingWeight, setEditingWeight] = useState<{ date: string; dateStr: string; weight: string; isNew?: boolean } | null>(null);
   const from = periodToDate(period);
   const now = useMemo(() => new Date(), []);
@@ -694,12 +696,21 @@ export default function AnalisesScreen() {
     queryKey: ["run_activities", period],
     queryFn: () => getRunActivities(from, now, 2000),
   });
+  const {
+    data: advancedRuns = [],
+    isLoading: loadingAdvancedRuns,
+    refetch: refetchAdvancedRuns,
+  } = useQuery({
+    queryKey: ["run_activities", "advanced"],
+    queryFn: () => getRunActivities(undefined, undefined, 5000),
+  });
 
   useFocusEffect(
     useCallback(() => {
       refetchLogs();
       refetchRuns();
-    }, [])
+      refetchAdvancedRuns();
+    }, [refetchLogs, refetchRuns, refetchAdvancedRuns])
   );
 
   const { mutateAsync: saveWeight, isPending: savingWeight } = useMutation({
@@ -1004,6 +1015,33 @@ export default function AnalisesScreen() {
             ) : (
               <Text className="text-surface-500 text-sm">Sem corridas neste periodo.</Text>
             )}
+            {advancedRuns.length > 0 ? (
+              <View className="pt-2 gap-3">
+                <TouchableOpacity
+                  onPress={() => setAdvancedOpen((current) => !current)}
+                  className="flex-row items-center justify-between rounded-2xl border border-surface-700/50 bg-surface-900/50 px-4 py-3"
+                >
+                  <View className="gap-1 pr-4 flex-1">
+                    <Text className="text-white text-sm font-bold">Análises Avançadas</Text>
+                    <Text className="text-surface-500 text-xs">
+                      Reconstrução de sessões a partir de run_sessions da base completa.
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name={advancedOpen ? "chevron-up" : "chevron-down"}
+                    size={16}
+                    color="#a1a1aa"
+                  />
+                </TouchableOpacity>
+                {advancedOpen ? (
+                  loadingAdvancedRuns ? (
+                    <ActivityIndicator color="#10b981" />
+                  ) : (
+                    <AdvancedRunAnalysisSection activities={advancedRuns} chartWidth={chartWidth} />
+                  )
+                ) : null}
+              </View>
+            ) : null}
           </Card>
 
           <Card className="gap-4">
