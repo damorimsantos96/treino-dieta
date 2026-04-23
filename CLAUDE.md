@@ -32,8 +32,8 @@
 
 ## Build / Deploy
 - Expo config is in `app.json`.
-- OTA updates exist on Expo Updates channels `preview` and `production`, but Diego's installed Android build should receive OTAs from `production`.
-- Do not treat `preview` as the default OTA target for Diego's device anymore.
+- OTA intended for Diego's installed Android app must target the `production` channel.
+- Do not use `npm run update:production` for non-interactive OTA deploys; call `eas update` directly with `EXPO_TOKEN` and an explicit `--message`.
 - `runtimeVersion.policy = appVersion`, so native-breaking releases must bump the app version.
 - Native version enforcement is backed by Supabase table `app_version_config`.
 
@@ -43,7 +43,7 @@
 - `app.json` also contains Supabase URL/key under `expo.extra`; config works without `.env.local`.
 - Edge functions require Supabase secrets plus provider secrets in the Supabase project env.
 - `scripts/import-excel.mjs` needs service role credentials in `scripts/.env`.
-- `.env.local` also contains `EXPO_TOKEN` Ã¢â‚¬â€ use it directly (e.g. `EXPO_TOKEN=$(grep EXPO_TOKEN .env.local | cut -d= -f2) eas ...`) before asking Diego to run any EAS or Expo CLI command.
+- `.env.local` also contains `EXPO_TOKEN` - use it directly. OTA command pattern: `EXPO_TOKEN=$(grep EXPO_TOKEN .env.local | cut -d= -f2) eas update --channel production --platform android --message "..."`.
 
 ## Navigation Map
 - `app/_layout.tsx` Ã¢â‚¬â€ wires QueryClient, auth session bootstrap, updates, automation, notification channel.
@@ -209,7 +209,7 @@ After implementing any change, always complete all applicable steps before repor
 4. **Push** `master` to `origin/master`.
 5. **Delete** the branch created for that work after the merge is complete.
 6. **Deploy/update** based on what changed:
-   - JS or asset change for Diego's installed Android app -> `npm run update:production` (OTA; user reopens app).
+   - JS or asset change for Diego's installed Android app -> run `eas update` directly with `EXPO_TOKEN`, `--channel production`, and explicit `--message` (OTA; user reopens app).
    - Edge Function change -> `npm run deploy:<function>` (already done during dev, but verify).
    - Native/SDK/permission change -> new EAS build required; notify Diego to reinstall APK.
 7. Tell Diego in one line what was deployed and what action (if any) he needs to take.
@@ -224,15 +224,15 @@ After implementing any change, always complete all applicable steps before repor
 
 After deploying, always tell Diego clearly which type was deployed and what he needs to do:
 
-**OTA for Diego's installed Android app (`npm run update:production`) - just close and reopen the app.**
-Only JS/assets change. Publish to `production` so the update lands on the same runtime line as the latest production build installed on Diego's Android. The `useAppUpdate` hook detects the new bundle on launch, downloads it, and
-reloads in ~1.2s. No manual action needed beyond reopening. To force: close the app completely and reopen.
+**OTA for Diego's installed Android app -> run `eas update` directly with `EXPO_TOKEN`, `--channel production`, and explicit `--message`, then just close and reopen the app.**
+Only JS/assets change. Do not rely on `npm run update:production` in non-interactive mode, because the OTA publish must carry an explicit message.
+Publish to `production` so the update lands on the same runtime line as the latest production build installed on Diego's Android. The `useAppUpdate` hook detects the new bundle on launch, downloads it, and reloads in ~1.2s.
+No manual action needed beyond reopening. To force: close the app completely and reopen.
 
-**Native APK (new EAS build) Ã¢â‚¬â€ reinstall the APK.**
+**Native APK (new EAS build) - reinstall the APK.**
 Required when a native module, permission, Expo SDK, or the `version` in `app.json` changes
 (`runtimeVersion.policy = "appVersion"`). The `useNativeVersionGate` hook compares the installed
 version with `app_version_config.min_runtime_version` in Supabase and blocks the app with a
 mandatory-update modal. After a native build: update `min_runtime_version` and `apk_download_url`
 in the `app_version_config` table, then send Diego the download link.
-
-> Quick rule: `npm run update:production` -> reopen app. EAS build -> reinstall APK.
+> Quick rule: direct `eas update --channel production --message "..."` -> reopen app. EAS build -> reinstall APK.
