@@ -384,6 +384,14 @@ function VolumePaceChart({
   const activeIndex = hovered ?? selected;
   const selectedItem = selected == null ? null : data[selected];
   const hoveredItem = hovered == null ? null : data[hovered];
+  const xLabelCount = Math.max(2, Math.floor(plotWidth / 48));
+  const xLabelSet = new Set(
+    data.length <= xLabelCount
+      ? data.map((_, i) => i)
+      : Array.from({ length: xLabelCount }, (_, i) =>
+          Math.round(i * (data.length - 1) / (xLabelCount - 1))
+        )
+  );
 
   return (
     <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-4 mb-4 gap-3">
@@ -506,7 +514,7 @@ function VolumePaceChart({
           style={{ left: CHART_LEFT, width: plotWidth, height: 14 }}
         >
           {data.map((item, index) => {
-            const show = data.length <= 8 || index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 5) === 0;
+            const show = xLabelSet.has(index);
             return (
               <Text
                 key={`${item.label}-axis`}
