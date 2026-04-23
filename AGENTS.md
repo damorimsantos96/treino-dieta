@@ -1,9 +1,10 @@
-# Treino & Dieta - AGENTS Guide
+﻿# Treino & Dieta - AGENTS Guide
 
 ## Purpose
 - Use this file as the Codex-facing project map.
 - `CLAUDE.md` is reference material only. Do not edit it unless explicitly asked.
 - Prefer this document over generic assumptions when navigating or changing the repo.
+- If `AGENTS.md` or `CLAUDE.md` is changed, those `.md` edits must also be committed and pushed.
 
 ## Product Overview
 - Personal fitness, nutrition, hydration, running, and PR tracking app.
@@ -53,8 +54,8 @@
 - `npm run check:supabase` validates Supabase DNS and health endpoint.
 - `npm run check:functions:garmin` type-checks the Garmin Edge Function.
 - `npm run deploy:garmin` deploy helper for `sync-garmin`.
-- `npm run update:preview` publishes Android OTA to preview.
-- `npm run update:production` publishes Android OTA to production.
+- `npm run update:preview` publishes Android OTA to preview, but it should not be the default OTA target for Diego's installed Android app.
+- `npm run update:production` publishes Android OTA to the production channel used by Diego's installed Android app.
 
 ## Environment
 - Local runtime env is `.env.local`.
@@ -62,9 +63,9 @@
 - `app.json` also contains Supabase values under `expo.extra`; the app may still boot without `.env.local`.
 - `scripts/import-excel.mjs` expects service-role credentials in `scripts/.env`.
 - Edge Functions depend on secrets configured in the Supabase project environment.
-- `.env.local` contains `EXPO_TOKEN`. Always read it and pass it as an env var before running EAS/Expo CLI commands — do not ask Diego to run them manually.
-  - Pattern: `EXPO_TOKEN=$(grep EXPO_TOKEN .env.local | cut -d= -f2) eas update --channel preview --platform android --environment preview --message "..."`
-
+- `.env.local` contains `EXPO_TOKEN`. Always read it and pass it as an env var before running EAS/Expo CLI commands. Do not ask Diego to run them manually.
+  - For OTA that must reach Diego's installed Android app, use `production`, not `preview`.
+  - Pattern: `EXPO_TOKEN=$(grep EXPO_TOKEN .env.local | cut -d= -f2) eas update --channel production --platform android --message "..."`
 ## App Structure
 - `app/_layout.tsx` wires QueryClient, auth bootstrap, updates, automation, and notifications.
 - `app/index.tsx` redirects to login or `/(tabs)/hoje`.
@@ -182,10 +183,11 @@ After implementing any change, always complete all applicable steps before repor
 4. **Push** `master` to `origin/master`.
 5. **Delete** the branch created for that work after the merge is complete.
 6. **Deploy/update** based on what changed:
-   - JS or asset change → `npm run update:preview` (OTA; user reopens app).
+   - JS or asset change for Diego's installed Android app -> `npm run update:production` (OTA; user reopens app).
    - Edge Function change → `npm run deploy:<function>` (already done during dev, but verify).
    - Native/SDK/permission change → new EAS build required; notify Diego to reinstall APK.
 7. Tell Diego in one line what was deployed and what action (if any) he needs to take.
+8. If this file or `CLAUDE.md` was edited, commit and push those `.md` changes too; there is no docs-only exception.
 
 ## Response Style
 - Be as concise as possible. Deliver the same information with the fewest words.
@@ -202,7 +204,7 @@ After implementing any change, always complete all applicable steps before repor
 - Health Connect issue: inspect permissions, `user_app_settings`, and local sync state.
 
 ## Deploy Notes
-- OTA update: user only needs to fully close and reopen the app.
+- OTA for Diego's installed Android app should be published to `production`; after that, the user only needs to fully close and reopen the app.
 - Native APK build: user must reinstall the APK.
 - Because `runtimeVersion.policy` is `appVersion`, native-breaking changes require bumping app version and updating `app_version_config`.
 - After a native build, ensure `app_version_config.min_runtime_version` and `apk_download_url` are updated consistently.
