@@ -39,8 +39,9 @@ export function BottomSheetModal({
   const panResponder = useMemo(
     () =>
       PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: (_, gesture) =>
-          gesture.dy > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+          gesture.dy > 4 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
         onPanResponderMove: (_, gesture) => {
           if (gesture.dy > 0) translateY.setValue(gesture.dy);
         },
@@ -94,7 +95,6 @@ export function BottomSheetModal({
             }}
           />
           <Animated.View
-            {...panResponder.panHandlers}
             style={[
               {
                 maxHeight,
@@ -104,23 +104,36 @@ export function BottomSheetModal({
                 borderTopLeftRadius: 24,
                 borderTopRightRadius: 24,
                 paddingHorizontal: 20,
-                paddingTop: 18,
+                paddingTop: 0,
                 paddingBottom: 34,
                 transform: [{ translateY }],
               },
               panelStyle,
             ]}
           >
-            <View
-              style={{
-                width: 40,
-                height: 4,
-                borderRadius: 999,
-                backgroundColor: "#72737f",
-                alignSelf: "center",
-                marginBottom: 12,
-              }}
-            />
+            {Platform.OS !== "web" && (
+              <View
+                {...panResponder.panHandlers}
+                style={{
+                  alignSelf: "stretch",
+                  alignItems: "center",
+                  paddingTop: 14,
+                  paddingBottom: 14,
+                }}
+              >
+                <View
+                  style={{
+                    width: 40,
+                    height: 4,
+                    borderRadius: 999,
+                    backgroundColor: "#72737f",
+                  }}
+                />
+              </View>
+            )}
+            {Platform.OS === "web" && (
+              <View style={{ paddingTop: 18 }} />
+            )}
             {content}
           </Animated.View>
         </View>
