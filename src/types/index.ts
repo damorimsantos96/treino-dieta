@@ -57,6 +57,7 @@ export interface DailyLog {
   temp_surf: number | null;
   temp_corrida: number | null;
   temp_ciclismo: number | null;
+  temp_musculacao: number | null;
   temp_sauna: number | null;
 
   // Heart rate by activity (bpm)

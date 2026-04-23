@@ -28,6 +28,7 @@ export function buildDailyLog(date: string, overrides: Partial<DailyLog> = {}): 
     temp_surf: null,
     temp_corrida: null,
     temp_ciclismo: null,
+    temp_musculacao: null,
     temp_sauna: null,
     bpm_academia: null,
     bpm_boxe: null,

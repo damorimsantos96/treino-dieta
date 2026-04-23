@@ -786,7 +786,7 @@ export default function AnalisesScreen() {
     logs
       .filter((log) => {
         return (
-          (log.min_academia ?? 0) + (log.min_boxe ?? 0) + (log.min_surf ?? 0) +
+          (log.min_boxe ?? 0) + (log.min_surf ?? 0) +
           (log.min_corrida ?? 0) + (log.min_crossfit ?? 0) + (log.min_musculacao ?? 0) +
           (log.min_ciclismo ?? 0) + (log.min_outros ?? 0) > 0
         );
@@ -1048,7 +1048,6 @@ export default function AnalisesScreen() {
             <SectionLabel label="Volume de Treino" />
             {(() => {
               const byActivity = [
-                { label: "Academia", key: "min_academia", color: "#a855f7" },
                 { label: "Boxe", key: "min_boxe", color: "#ef4444" },
                 { label: "Surf", key: "min_surf", color: "#06b6d4" },
                 { label: "Ciclismo", key: "min_ciclismo", color: "#10b981" },
