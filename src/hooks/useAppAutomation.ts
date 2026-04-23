@@ -3,6 +3,7 @@ import { AppState } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DEFAULT_USER_APP_SETTINGS } from "@/constants/appDefaults";
 import { syncBackgroundAutomationRegistration } from "@/lib/backgroundAutomation";
+import { scheduleWaterReminderNotifications } from "@/lib/notifications";
 import { getUserAppSettings, upsertUserAppSettings } from "@/lib/api";
 import { syncHealthConnectWeights } from "@/lib/healthConnect";
 
@@ -31,6 +32,17 @@ export function useAppAutomation() {
     effectiveSettings.water_reminder_interval_min,
     effectiveSettings.water_reminders_enabled,
     effectiveSettings.water_start_time,
+  ]);
+
+  useEffect(() => {
+    scheduleWaterReminderNotifications(effectiveSettings).catch(() => {
+      // Best effort scheduling only.
+    });
+  }, [
+    effectiveSettings.water_reminders_enabled,
+    effectiveSettings.water_start_time,
+    effectiveSettings.water_end_time,
+    effectiveSettings.water_reminder_interval_min,
   ]);
 
   useEffect(() => {

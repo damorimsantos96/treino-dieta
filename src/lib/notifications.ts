@@ -2,6 +2,7 @@ import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
 export const WATER_REMINDER_CHANNEL_ID = "water-reminders";
+const WATER_REMINDER_DATA_TAG = "water-reminder-scheduled";
 
 export function hasNotificationPermission(
   permission: Notifications.NotificationPermissionsStatus
@@ -67,4 +68,51 @@ export async function sendWaterReminderNotification(message: string) {
     },
     trigger: null,
   });
+}
+
+export async function scheduleWaterReminderNotifications(settings: {
+  water_reminders_enabled: boolean;
+  water_start_time: string;
+  water_end_time: string;
+  water_reminder_interval_min: number;
+}) {
+  const existing = await Notifications.getAllScheduledNotificationsAsync();
+  for (const notif of existing) {
+    if (notif.content.data?.tag === WATER_REMINDER_DATA_TAG) {
+      await Notifications.cancelScheduledNotificationAsync(notif.identifier);
+    }
+  }
+
+  if (!settings.water_reminders_enabled) return;
+
+  const parseHM = (clock: string): [number, number] => {
+    const [h, m] = clock.split(":").map(Number);
+    return [h ?? 0, m ?? 0];
+  };
+
+  const [startH, startM] = parseHM(settings.water_start_time);
+  const [endH, endM] = parseHM(settings.water_end_time);
+  const startMinutes = startH * 60 + startM;
+  const endMinutes = endH * 60 + endM;
+  const interval = Math.max(15, settings.water_reminder_interval_min);
+
+  await ensureNotificationChannel();
+
+  for (let t = startMinutes; t <= endMinutes; t += interval) {
+    const hour = Math.floor(t / 60);
+    const minute = t % 60;
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Hora de beber agua",
+        body: "Nao esqueca de se hidratar!",
+        sound: true,
+        data: { screen: "agua", tag: WATER_REMINDER_DATA_TAG },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        hour,
+        minute,
+      },
+    });
+  }
 }
