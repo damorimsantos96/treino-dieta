@@ -137,6 +137,25 @@ function NumInput({
   );
 }
 
+function SyncedStat({ label, value, unit }: { label: string; value: string | number; unit?: string }) {
+  return (
+    <View className="flex-1 gap-1.5" style={{ minWidth: 0 }}>
+      <Text className="text-surface-500 text-xs font-semibold">{label}</Text>
+      <View
+        className="flex-row items-center bg-surface-700/30 border border-surface-700/50 rounded-xl px-3 py-2.5"
+        style={{ minWidth: 0 }}
+      >
+        <Text className="flex-1 text-surface-300 text-sm" style={{ minWidth: 0 }}>
+          {String(value)}
+        </Text>
+        {unit && (
+          <Text className="text-surface-500 text-xs font-medium ml-1 shrink-0">{unit}</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
 function TargetRow({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
     <View className="flex-row items-center justify-between py-2.5 border-b border-surface-700/40">
@@ -508,6 +527,59 @@ export default function RegistrarScreen() {
           </View>
 
           <ProviderSyncPanel variant="compact" />
+
+          {/* Corrida — sincronizada do Garmin (read-only) */}
+          {(existing?.kcal_corrida != null || existing?.min_corrida != null) && (
+            <View className="border-t border-surface-700/50 pt-3 gap-2">
+              <View className="flex-row items-center justify-between">
+                <Text className="text-white text-sm font-bold">🏃 Corrida</Text>
+                <View className="bg-blue-500/15 border border-blue-500/30 rounded-lg px-2 py-0.5">
+                  <Text className="text-blue-400 text-xs font-semibold">Garmin</Text>
+                </View>
+              </View>
+              <View className="flex-row gap-2">
+                {existing.kcal_corrida != null && (
+                  <SyncedStat label="kcal" value={existing.kcal_corrida} unit="kcal" />
+                )}
+                {existing.min_corrida != null && (
+                  <SyncedStat label="Duração" value={existing.min_corrida} unit="min" />
+                )}
+              </View>
+              {(existing?.temp_corrida != null || existing?.bpm_corrida != null) && (
+                <View className="flex-row gap-2">
+                  {existing.temp_corrida != null && (
+                    <SyncedStat label="Temperatura" value={existing.temp_corrida} unit="°C" />
+                  )}
+                  {existing.bpm_corrida != null && (
+                    <SyncedStat label="FC média" value={existing.bpm_corrida} unit="bpm" />
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Whoop — sincronizado (read-only) */}
+          {(existing?.whoop_kcal != null || existing?.whoop_strain != null) && (
+            <View className="border-t border-surface-700/50 pt-3 gap-2">
+              <View className="flex-row items-center justify-between">
+                <Text className="text-white text-sm font-bold">📡 Whoop</Text>
+                <View className="bg-purple-500/15 border border-purple-500/30 rounded-lg px-2 py-0.5">
+                  <Text className="text-purple-400 text-xs font-semibold">Whoop</Text>
+                </View>
+              </View>
+              <View className="flex-row gap-2">
+                {existing.whoop_kcal != null && (
+                  <SyncedStat label="kcal" value={existing.whoop_kcal} unit="kcal" />
+                )}
+                {existing.whoop_strain != null && (
+                  <SyncedStat label="Strain" value={existing.whoop_strain} />
+                )}
+                {existing.whoop_recovery != null && (
+                  <SyncedStat label="Recovery" value={`${existing.whoop_recovery}%`} />
+                )}
+              </View>
+            </View>
+          )}
 
           {ACTIVITIES.filter(({ key }) => selectedActivities.has(key)).map(
             ({ key, label, icon, hasTempBpm }) => (
