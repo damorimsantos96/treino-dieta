@@ -56,7 +56,7 @@
 - `npm run check:functions:garmin` type-checks the Garmin Edge Function.
 - `npm run deploy:garmin` deploy helper for `sync-garmin`.
 - `npm run update:preview` publishes Android OTA to preview, but it should not be the default OTA target for Diego's installed Android app.
-- For OTA to Diego's installed Android app, do not rely on `npm run update:production` in non-interactive mode; run `eas update` directly with `EXPO_TOKEN`, `--channel production`, and explicit `--message`.
+- For OTA to Diego's installed Android app, do not rely on `npm run update:production` in non-interactive mode; run `eas update` directly with `EXPO_TOKEN`, `--channel production`, `--environment production`, `--platform android`, and explicit `--message`.
 
 ## Environment
 - Local runtime env is `.env.local`.
@@ -66,7 +66,8 @@
 - Edge Functions depend on secrets configured in the Supabase project environment.
 - `.env.local` contains `EXPO_TOKEN`. Always read it and pass it as an env var before running EAS/Expo CLI commands. Do not ask Diego to run them manually.
   - For OTA that must reach Diego's installed Android app, use `production`, not `preview`.
-  - Pattern: `EXPO_TOKEN=$(grep EXPO_TOKEN .env.local | cut -d= -f2) eas update --channel production --platform android --message "..."`
+  - Non-interactive EAS OTA must include both `--channel production` and `--environment production`; EAS can refuse the update without the environment flag.
+  - PowerShell pattern: `$env:EXPO_TOKEN = (Select-String -Path .env.local -Pattern '^EXPO_TOKEN=').Line.Split('=',2)[1]; eas update --channel production --environment production --platform android --message "..."`
 ## App Structure
 - `app/_layout.tsx` wires QueryClient, auth bootstrap, updates, automation, and notifications.
 - `app/index.tsx` redirects to login or `/(tabs)/hoje`.
@@ -184,7 +185,7 @@ After implementing any change, always complete all applicable steps before repor
 4. **Push** `master` to `origin/master`.
 5. **Delete** the branch created for that work after the merge is complete.
 6. **Deploy/update** based on what changed:
-   - JS or asset change for Diego's installed Android app -> run `eas update` directly with `EXPO_TOKEN`, `--channel production`, and explicit `--message` (OTA; user reopens app).
+   - JS or asset change for Diego's installed Android app -> run `eas update` directly with `EXPO_TOKEN`, `--channel production`, `--environment production`, `--platform android`, and explicit `--message` (OTA; user reopens app).
    - Edge Function change → `npm run deploy:<function>` (already done during dev, but verify).
    - Native/SDK/permission change → new EAS build required; notify Diego to reinstall APK.
 7. Tell Diego in one line what was deployed and what action (if any) he needs to take.
@@ -205,7 +206,7 @@ After implementing any change, always complete all applicable steps before repor
 - Health Connect issue: inspect permissions, `user_app_settings`, and local sync state.
 
 ## Deploy Notes
-- OTA for Diego's installed Android app should be published with direct `eas update --channel production --message "..."`; after that, the user only needs to fully close and reopen the app.
+- OTA for Diego's installed Android app should be published with direct `eas update --channel production --environment production --platform android --message "..."`; after that, the user only needs to fully close and reopen the app.
 - Native APK build: user must reinstall the APK.
 - Because `runtimeVersion.policy` is `appVersion`, native-breaking changes require bumping app version and updating `app_version_config`.
 - After a native build, ensure `app_version_config.min_runtime_version` and `apk_download_url` are updated consistently.
