@@ -4,6 +4,7 @@ import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { RunActivity } from "@/types";
 import { formatPace } from "@/utils/calculations";
+import { ChartTooltip } from "@/components/ui/ChartTooltip";
 import {
   ADVANCED_RUN_TYPE_COLORS,
   AdvancedRunAnalysis,
@@ -15,6 +16,8 @@ import {
 const CHART_HEIGHT = 400;
 const CHART_PADDING = { top: 18, right: 20, bottom: 34, left: 44 };
 const CHART_GRID_LINES = 4;
+const CHART_TOOLTIP_WIDTH = 230;
+const CHART_TOOLTIP_HEIGHT = 118;
 const COMP_COLORS = {
   forte: "#facc15",
   moderada: "#86efac",
@@ -103,6 +106,41 @@ function lineStyle(x1: number, y1: number, x2: number, y2: number, color: string
   };
 }
 
+function tooltipPosition(x: number, y: number, chartWidth: number) {
+  return {
+    x: clamp(x + 12, 8, Math.max(8, chartWidth - CHART_TOOLTIP_WIDTH)),
+    y: clamp(y - CHART_TOOLTIP_HEIGHT, 8, CHART_HEIGHT - CHART_TOOLTIP_HEIGHT - 8),
+  };
+}
+
+function SessionTooltip({ session, valueLabel, value }: {
+  session: AdvancedRunSessionAnalysis;
+  valueLabel: string;
+  value: string;
+}) {
+  return (
+    <View className="gap-1">
+      <View className="flex-row items-center gap-1.5">
+        <View
+          className="w-2 h-2 rounded-full"
+          style={{ backgroundColor: ADVANCED_RUN_TYPE_COLORS[session.sessionType] ?? "#94a3b8" }}
+        />
+        <Text className="text-surface-400 text-[10px]">{session.date}</Text>
+      </View>
+      <Text className="text-white text-xs font-bold">{session.sessionType}</Text>
+      <Text className="text-amber-300 text-xs font-semibold">
+        {valueLabel}: {value}
+      </Text>
+      <Text className="text-surface-400 text-[10px]">
+        {formatValue(session.totalDistanceKm, 1)} km · {session.workPaceMinKm ? `${formatPace(session.workPaceMinKm)}/km` : "pace —"}
+      </Text>
+      <Text className="text-surface-500 text-[10px]">
+        FC norm. {session.workHrNormalized ? `${formatValue(session.workHrNormalized, 0)} bpm` : "—"} · Temp. {session.tempC != null ? `${formatValue(session.tempC, 1)} °C` : "—"}
+      </Text>
+    </View>
+  );
+}
+
 function AdvancedPanel({
   title,
   description,
@@ -177,6 +215,11 @@ function ConditioningChart({
   analysis: AdvancedRunAnalysis;
   baseWidth: number;
 }) {
+  const [hoveredPoint, setHoveredPoint] = useState<{
+    session: AdvancedRunSessionAnalysis;
+    x: number;
+    y: number;
+  } | null>(null);
   const points = analysis.sessions.filter((session) => session.workEfNorm != null);
   if (points.length < 2) {
     return <Text className="text-surface-500 text-sm">Dados insuficientes para traçar a evolução.</Text>;
@@ -276,6 +319,50 @@ function ConditioningChart({
               />
             );
           })}
+
+          {points.map((session) => {
+            const x = CHART_PADDING.left + scale(session.daysFromStart, 0, totalDays || 1, 0, plotWidth);
+            const y = CHART_PADDING.top + scale(session.workEfNorm ?? yMin, yMin, yMax, plotHeight, 0);
+            return (
+              <View
+                key={`hit-${session.id}`}
+                className="absolute rounded-full"
+                style={{ left: x - 10, top: y - 10, width: 20, height: 20 }}
+                {...({
+                  onPointerMove: () => setHoveredPoint({ session, x, y }),
+                  onPointerLeave: () => setHoveredPoint(null),
+                } as any)}
+              />
+            );
+          })}
+
+          {hoveredPoint ? (
+            <View
+              className="absolute rounded-full border border-white/80"
+              pointerEvents="none"
+              style={{
+                left: hoveredPoint.x - 5,
+                top: hoveredPoint.y - 5,
+                width: 10,
+                height: 10,
+                backgroundColor: ADVANCED_RUN_TYPE_COLORS[hoveredPoint.session.sessionType] ?? "#94a3b8",
+              }}
+            />
+          ) : null}
+
+          <ChartTooltip
+            visible={hoveredPoint != null}
+            x={hoveredPoint ? tooltipPosition(hoveredPoint.x, hoveredPoint.y, chartWidth).x : 0}
+            y={hoveredPoint ? tooltipPosition(hoveredPoint.x, hoveredPoint.y, chartWidth).y : 0}
+          >
+            {hoveredPoint ? (
+              <SessionTooltip
+                session={hoveredPoint.session}
+                valueLabel="EF_norm"
+                value={formatEf(hoveredPoint.session.workEfNorm)}
+              />
+            ) : null}
+          </ChartTooltip>
         </View>
       </ScrollView>
 
@@ -311,6 +398,7 @@ function ComparatorSection({
 }) {
   const [search, setSearch] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [rightPanelHeight, setRightPanelHeight] = useState<number | null>(null);
 
   useEffect(() => {
     if (!analysis.sessions.length) {
@@ -369,15 +457,22 @@ function ComparatorSection({
       ? ((selectedSession.workEfNorm - avgNeighborEf) / avgNeighborEf) * 100
       : null;
   const stacked = baseWidth < 720;
+  const leftMaxHeight = stacked ? 360 : rightPanelHeight ?? undefined;
+  const leftListMaxHeight = stacked
+    ? 288
+    : rightPanelHeight != null
+      ? Math.max(180, rightPanelHeight - 74)
+      : undefined;
 
   return (
     <View className="gap-4">
-      <View className={`gap-4 ${stacked ? "" : "flex-row items-stretch"}`}>
+      <View className={`gap-4 ${stacked ? "" : "flex-row items-start"}`}>
         <View
           className="rounded-2xl border border-surface-700/50 bg-surface-800/60 p-2 gap-2"
           style={{
             alignSelf: stacked ? "auto" : "stretch",
-            maxHeight: stacked ? 360 : undefined,
+            maxHeight: leftMaxHeight,
+            overflow: "hidden",
             width: stacked ? "100%" : 250,
           }}
         >
@@ -390,9 +485,10 @@ function ComparatorSection({
           />
 
           <ScrollView
+            className="app-scrollbar app-scrollbar-compact"
             nestedScrollEnabled
-            style={{ flex: stacked ? undefined : 1, maxHeight: stacked ? 288 : undefined }}
-            showsVerticalScrollIndicator={false}
+            style={{ flex: stacked ? undefined : 1, maxHeight: leftListMaxHeight }}
+            showsVerticalScrollIndicator
           >
             {filteredSessions.map((session) => (
               <TouchableOpacity
@@ -413,7 +509,10 @@ function ComparatorSection({
           </ScrollView>
         </View>
 
-        <View className="flex-1 rounded-2xl border border-surface-700/50 bg-surface-800/60 p-4 gap-4">
+        <View
+          className="flex-1 rounded-2xl border border-surface-700/50 bg-surface-800/60 p-4 gap-4"
+          onLayout={(event) => setRightPanelHeight(Math.ceil(event.nativeEvent.layout.height))}
+        >
           {selectedSession ? (
             <>
               <View className="flex-row items-start justify-between gap-3">
@@ -559,6 +658,11 @@ function MilestonesChart({
   analysis: AdvancedRunAnalysis;
   baseWidth: number;
 }) {
+  const [hoveredPoint, setHoveredPoint] = useState<{
+    session: AdvancedRunSessionAnalysis;
+    x: number;
+    y: number;
+  } | null>(null);
   const points = analysis.sessions.filter((session) => session.milestoneEf != null);
   if (points.length < 2) {
     return <Text className="text-surface-500 text-sm">Ainda não há sessões suficientes para marcar janelas.</Text>;
@@ -625,6 +729,35 @@ function MilestonesChart({
             return <View key={`milestone-line-${session.id}`} style={lineStyle(x1, y1, x2, y2, "#facc15", 2.5, 0.92) as any} />;
           })}
 
+          {points.map((session) => {
+            const x = CHART_PADDING.left + scale(session.daysFromStart, 0, totalDays || 1, 0, plotWidth);
+            const y = CHART_PADDING.top + scale(session.milestoneEf ?? yMin, yMin, yMax, plotHeight, 0);
+            return (
+              <View
+                key={`milestone-hit-${session.id}`}
+                className="absolute rounded-full"
+                style={{ left: x - 10, top: y - 10, width: 20, height: 20 }}
+                {...({
+                  onPointerMove: () => setHoveredPoint({ session, x, y }),
+                  onPointerLeave: () => setHoveredPoint(null),
+                } as any)}
+              />
+            );
+          })}
+
+          {hoveredPoint ? (
+            <View
+              className="absolute rounded-full border border-white/80 bg-amber-300"
+              pointerEvents="none"
+              style={{
+                left: hoveredPoint.x - 5,
+                top: hoveredPoint.y - 5,
+                width: 10,
+                height: 10,
+              }}
+            />
+          ) : null}
+
           {analysis.milestones.map((milestone, index) => {
             const session = analysis.sessions[milestone.index];
             if (!session?.milestoneEf) return null;
@@ -634,7 +767,7 @@ function MilestonesChart({
             const alignRight = x > chartWidth * 0.6;
 
             return (
-              <View key={milestone.sessionId}>
+              <View key={milestone.sessionId} pointerEvents="none">
                 <View
                   className="absolute"
                   style={{ left: x, top: CHART_PADDING.top, width: 1, height: plotHeight, backgroundColor: color, opacity: 0.8 }}
@@ -678,6 +811,20 @@ function MilestonesChart({
               </View>
             );
           })}
+
+          <ChartTooltip
+            visible={hoveredPoint != null}
+            x={hoveredPoint ? tooltipPosition(hoveredPoint.x, hoveredPoint.y, chartWidth).x : 0}
+            y={hoveredPoint ? tooltipPosition(hoveredPoint.x, hoveredPoint.y, chartWidth).y : 0}
+          >
+            {hoveredPoint ? (
+              <SessionTooltip
+                session={hoveredPoint.session}
+                valueLabel="Mediana 20"
+                value={formatEf(hoveredPoint.session.milestoneEf)}
+              />
+            ) : null}
+          </ChartTooltip>
         </View>
       </ScrollView>
 
