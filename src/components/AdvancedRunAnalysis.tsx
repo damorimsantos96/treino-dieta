@@ -12,7 +12,7 @@ import {
   buildAdvancedRunAnalysis,
 } from "@/utils/runAdvancedAnalytics";
 
-const CHART_HEIGHT = 240;
+const CHART_HEIGHT = 400;
 const CHART_PADDING = { top: 18, right: 20, bottom: 34, left: 44 };
 const CHART_GRID_LINES = 4;
 const COMP_COLORS = {
@@ -372,42 +372,46 @@ function ComparatorSection({
 
   return (
     <View className="gap-4">
-      <TextInput
-        value={search}
-        onChangeText={setSearch}
-        placeholder="buscar por data (2026-04) ou tipo..."
-        placeholderTextColor="#6b7280"
-        className="rounded-xl border border-surface-700/50 bg-surface-800/70 px-3.5 py-3 text-white"
-      />
-
-      <View className={`gap-4 ${stacked ? "" : "flex-row"}`}>
-        <ScrollView
-          nestedScrollEnabled
-          className="rounded-2xl border border-surface-700/50 bg-surface-800/60"
-          style={{ maxHeight: stacked ? 280 : 420, width: stacked ? "100%" : 280 }}
+      <View className={`gap-4 ${stacked ? "" : "flex-row items-stretch"}`}>
+        <View
+          className="rounded-2xl border border-surface-700/50 bg-surface-800/60 p-2 gap-2"
+          style={{
+            alignSelf: stacked ? "auto" : "stretch",
+            maxHeight: stacked ? 360 : undefined,
+            width: stacked ? "100%" : 250,
+          }}
         >
-          <View className="p-2">
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="buscar por data ou tipo..."
+            placeholderTextColor="#6b7280"
+            className="rounded-xl border border-surface-700/50 bg-surface-900/50 px-3.5 py-3 text-white"
+          />
+
+          <ScrollView
+            nestedScrollEnabled
+            style={{ flex: stacked ? undefined : 1, maxHeight: stacked ? 288 : undefined }}
+            showsVerticalScrollIndicator={false}
+          >
             {filteredSessions.map((session) => (
               <TouchableOpacity
                 key={session.id}
                 className={`rounded-xl border px-3 py-3 mb-2 ${selectedSessionId === session.id ? "bg-amber-400/10 border-amber-300/40" : "bg-surface-900/30 border-surface-700/40"}`}
                 onPress={() => setSelectedSessionId(session.id)}
               >
-                <View className="flex-row items-center justify-between">
-                  <Text className="text-amber-300 text-xs font-semibold">{session.date}</Text>
-                  <Text className="text-surface-500 text-[10px]">{session.shortId}</Text>
-                </View>
+                <Text className="text-amber-300 text-xs font-semibold">{session.date}</Text>
                 <Text className="text-white text-sm font-semibold mt-1">{session.sessionType}</Text>
                 <Text className="text-surface-500 text-xs mt-1">
-                  {formatValue(session.totalDistanceKm, 1)} km · {session.workPaceMinKm ? `${formatPace(session.workPaceMinKm)}/km` : "—"} · EF {formatEf(session.workEfNorm)}
+                  {formatValue(session.totalDistanceKm, 1)} km · {session.workPaceMinKm ? `${formatPace(session.workPaceMinKm)}/km` : "—"}
                 </Text>
               </TouchableOpacity>
             ))}
             {filteredSessions.length === 0 ? (
               <Text className="text-surface-500 text-sm px-2 py-4">Nenhuma sessão bateu com a busca.</Text>
             ) : null}
-          </View>
-        </ScrollView>
+          </ScrollView>
+        </View>
 
         <View className="flex-1 rounded-2xl border border-surface-700/50 bg-surface-800/60 p-4 gap-4">
           {selectedSession ? (
@@ -456,7 +460,7 @@ function ComparatorSection({
                 <Text className="text-surface-500 text-[10px] font-semibold uppercase tracking-widest">
                   5 sessões mais estruturalmente similares
                 </Text>
-                {neighbors.map(({ session, distance }) => {
+                {neighbors.map(({ session }) => {
                   const delta =
                     selectedSession.workEfNorm != null &&
                     session.workEfNorm != null &&
@@ -476,12 +480,11 @@ function ComparatorSection({
                       className="rounded-xl border border-surface-700/50 bg-surface-900/40 px-3 py-3 gap-2"
                       onPress={() => setSelectedSessionId(session.id)}
                     >
-                      <View className="flex-row items-center justify-between gap-3">
+                      <View className="flex-row items-center gap-3">
                         <View className="flex-1">
                           <Text className="text-amber-300 text-xs font-semibold">{session.date}</Text>
                           <Text className="text-white text-sm mt-0.5">{session.sessionType}</Text>
                         </View>
-                        <Text className="text-surface-500 text-[10px]">dist {formatValue(distance, 2)}</Text>
                       </View>
 
                       <View className="h-5 justify-center">
@@ -729,7 +732,7 @@ export function AdvancedRunAnalysisSection({
         </Text>
       </View>
 
-      <AdvancedPanel title="4 principais itens">
+      <AdvancedPanel title="Principais itens">
         <View className="flex-row flex-wrap justify-between gap-y-3">
           <SummaryCard
             label="Evolução — EF normalizado"
@@ -740,7 +743,7 @@ export function AdvancedRunAnalysisSection({
                 : "Sem tendência suficiente."
             }
             valueColor="text-amber-300"
-            width={wideCards ? "24%" : "48%"}
+            width={wideCards ? "32%" : "100%"}
           />
           <SummaryCard
             label="FC normalizada no mesmo pace"
@@ -754,19 +757,13 @@ export function AdvancedRunAnalysisSection({
                 ? "Longão contínuo com ajuste por pace."
                 : "Dados insuficientes para o ajuste."
             }
-            width={wideCards ? "24%" : "48%"}
+            width={wideCards ? "32%" : "100%"}
           />
           <SummaryCard
             label="Comparações estruturais"
             value={`${analysis.summary.comparableSessions}/${analysis.summary.totalSessions}`}
             hint="Fortes + moderadas sobre a base total."
-            width={wideCards ? "24%" : "48%"}
-          />
-          <SummaryCard
-            label="Sessões com flag de qualidade"
-            value={`${analysis.summary.flaggedSessions}/${analysis.summary.totalSessions}`}
-            hint="Duração recomputada ou FC/temp ausentes."
-            width={wideCards ? "24%" : "48%"}
+            width={wideCards ? "32%" : "100%"}
           />
         </View>
       </AdvancedPanel>
