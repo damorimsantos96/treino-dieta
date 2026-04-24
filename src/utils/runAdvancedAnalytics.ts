@@ -1,8 +1,15 @@
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { RunActivity, RunSession } from "@/types";
 
-const TEMP_HR_SLOPE = 0.85;
+const TEMP_HR_SLOPE_FALLBACK = 0.85;
 const TEMP_REF_C = 22;
+const TEMP_MODEL_MIN_SESSIONS = 12;
+const TEMP_MODEL_MIN_R2 = 0.05;
+const COMPARABILITY_STRONG_MAX = 0.5;
+const COMPARABILITY_MODERATE_MAX = 1.14;
+const HR_SAME_PACE_TARGET_MIN_KM = 9;
+const HR_SAME_PACE_TARGET_MIN_PER_KM = 6;
+const HR_SAME_PACE_TARGET_TOLERANCE = 0.35;
 const EPSILON = 1e-6;
 
 type BlockKind = "work" | "recovery";
@@ -28,6 +35,12 @@ interface SessionIntervalRow {
 interface SessionTrend {
   intercept: number;
   slopePerDay: number;
+}
+
+interface TemperatureHrModel {
+  slopeBpmPerC: number;
+  rSquared: number | null;
+  sampleCount: number;
 }
 
 export interface AdvancedRunNeighbor {
@@ -103,6 +116,9 @@ export interface AdvancedRunAnalysisSummary {
   efTrendPercentPerMonth: number | null;
   hrSamePaceSlopeBpmPerMonth: number | null;
   hrSamePaceCount: number;
+  temperatureHrSlopeBpmPerC: number;
+  temperatureModelR2: number | null;
+  temperatureModelCount: number;
 }
 
 export interface AdvancedRunAnalysis {
@@ -276,6 +292,115 @@ function solveLinearSystem(matrix: number[][], vector: number[]): number[] | nul
   return augmented.map((row) => row[size]);
 }
 
+function regressionRSquared(rows: Array<{ y: number; x: number[] }>, coefficients: number[]) {
+  if (rows.length < 2) return null;
+  const meanY = mean(rows.map((row) => row.y));
+  if (meanY == null) return null;
+
+  let residualSumSquares = 0;
+  let totalSumSquares = 0;
+  for (const row of rows) {
+    const prediction = coefficients.reduce((sum, coefficient, index) => sum + coefficient * row.x[index], 0);
+    residualSumSquares += (row.y - prediction) ** 2;
+    totalSumSquares += (row.y - meanY) ** 2;
+  }
+
+  if (totalSumSquares <= EPSILON) return null;
+  return 1 - residualSumSquares / totalSumSquares;
+}
+
+function normalizeLabel(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isLongContinuousType(value: string) {
+  const normalized = normalizeLabel(value);
+  return normalized.includes("long") && normalized.includes("continuo");
+}
+
+function fitTemperatureHrModel(sessions: SessionFeatureDraft[], daysFromStart: number[]): TemperatureHrModel {
+  const rows = sessions
+    .map((session, index) => {
+      if (
+        !isLongContinuousType(session.sessionType) ||
+        session.workHrAvg == null ||
+        session.workPaceMinKm == null ||
+        session.tempC == null ||
+        !Number.isFinite(daysFromStart[index])
+      ) {
+        return null;
+      }
+
+      return {
+        y: session.workHrAvg,
+        x: [1, session.workPaceMinKm, session.tempC, daysFromStart[index]],
+      };
+    })
+    .filter((row): row is { y: number; x: number[] } => row != null);
+
+  if (rows.length < TEMP_MODEL_MIN_SESSIONS) {
+    return { slopeBpmPerC: TEMP_HR_SLOPE_FALLBACK, rSquared: null, sampleCount: rows.length };
+  }
+
+  const size = rows[0].x.length;
+  const xtx = Array.from({ length: size }, () => Array(size).fill(0));
+  const xty = Array(size).fill(0);
+
+  for (const row of rows) {
+    for (let i = 0; i < size; i += 1) {
+      xty[i] += row.x[i] * row.y;
+      for (let j = 0; j < size; j += 1) {
+        xtx[i][j] += row.x[i] * row.x[j];
+      }
+    }
+  }
+
+  const solved = solveLinearSystem(xtx, xty);
+  if (!solved) {
+    return { slopeBpmPerC: TEMP_HR_SLOPE_FALLBACK, rSquared: null, sampleCount: rows.length };
+  }
+
+  const rSquared = regressionRSquared(rows, solved);
+  const slope = solved[2];
+  if (
+    !Number.isFinite(slope) ||
+    slope <= 0 ||
+    slope > 2 ||
+    (rSquared != null && rSquared < TEMP_MODEL_MIN_R2)
+  ) {
+    return { slopeBpmPerC: TEMP_HR_SLOPE_FALLBACK, rSquared, sampleCount: rows.length };
+  }
+
+  return { slopeBpmPerC: slope, rSquared, sampleCount: rows.length };
+}
+
+function applyTemperatureNormalization(session: SessionFeatureDraft, slopeBpmPerC: number) {
+  session.hrNormalized =
+    session.hrAvg != null
+      ? session.hrAvg - slopeBpmPerC * ((session.tempC ?? TEMP_REF_C) - TEMP_REF_C)
+      : null;
+
+  session.workHrNormalized =
+    session.workHrAvg != null
+      ? session.workHrAvg - slopeBpmPerC * ((session.tempC ?? TEMP_REF_C) - TEMP_REF_C)
+      : null;
+
+  const workSpeedKmh =
+    session.workPaceMinKm != null && session.workPaceMinKm > 0
+      ? 60 / session.workPaceMinKm
+      : null;
+
+  session.workEfNorm =
+    workSpeedKmh != null &&
+    session.workHrNormalized != null &&
+    session.workHrNormalized > 0
+      ? workSpeedKmh / session.workHrNormalized
+      : null;
+}
+
 function paceAdjustedHrSlopePerMonth(sessions: SessionFeatureDraft[], daysFromStart: number[]): { slopeBpmPerMonth: number | null; count: number } {
   const rows = sessions
     .map((session, index) => ({
@@ -283,11 +408,59 @@ function paceAdjustedHrSlopePerMonth(sessions: SessionFeatureDraft[], daysFromSt
       days: daysFromStart[index],
       pace: session.workPaceMinKm,
       type: session.sessionType,
+      distanceKm: session.totalDistanceKm,
     }))
     .filter((row) =>
       row.type === "Longão contínuo" &&
       row.y != null &&
       row.pace != null &&
+      Number.isFinite(row.days)
+    );
+
+  if (rows.length < 4) {
+    return { slopeBpmPerMonth: null, count: rows.length };
+  }
+
+  const xtx = [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ];
+  const xty = [0, 0, 0];
+
+  for (const row of rows) {
+    const x = [1, row.days, row.pace ?? 0];
+    for (let i = 0; i < 3; i += 1) {
+      xty[i] += x[i] * (row.y ?? 0);
+      for (let j = 0; j < 3; j += 1) {
+        xtx[i][j] += x[i] * x[j];
+      }
+    }
+  }
+
+  const solved = solveLinearSystem(xtx, xty);
+  if (!solved) {
+    return { slopeBpmPerMonth: null, count: rows.length };
+  }
+
+  return { slopeBpmPerMonth: solved[1] * 30, count: rows.length };
+}
+
+function paceAdjustedHrSlopePerMonthCalibrated(sessions: SessionFeatureDraft[], daysFromStart: number[]): { slopeBpmPerMonth: number | null; count: number } {
+  const rows = sessions
+    .map((session, index) => ({
+      y: session.workHrNormalized,
+      days: daysFromStart[index],
+      pace: session.workPaceMinKm,
+      type: session.sessionType,
+      distanceKm: session.totalDistanceKm,
+    }))
+    .filter((row) =>
+      isLongContinuousType(row.type) &&
+      row.y != null &&
+      row.pace != null &&
+      row.distanceKm >= HR_SAME_PACE_TARGET_MIN_KM &&
+      Math.abs(row.pace - HR_SAME_PACE_TARGET_MIN_PER_KM) <= HR_SAME_PACE_TARGET_TOLERANCE &&
       Number.isFinite(row.days)
     );
 
@@ -355,8 +528,8 @@ function inferType(session: Pick<SessionFeatureDraft, "nFast" | "workShareDist" 
 }
 
 function comparabilityLabel(distance: number | null): ComparabilityLabel {
-  if (distance != null && distance <= 0.5) return "forte";
-  if (distance != null && distance <= 1.2) return "moderada";
+  if (distance != null && distance <= COMPARABILITY_STRONG_MAX) return "forte";
+  if (distance != null && distance <= COMPARABILITY_MODERATE_MAX) return "moderada";
   return "fraca";
 }
 
@@ -614,11 +787,11 @@ function computeSessionFeatures(runActivityId: string, date: string, rows: Sessi
 
   const hrNormalized =
     hrAvg != null
-      ? hrAvg - TEMP_HR_SLOPE * ((tempC ?? TEMP_REF_C) - TEMP_REF_C)
+      ? hrAvg - TEMP_HR_SLOPE_FALLBACK * ((tempC ?? TEMP_REF_C) - TEMP_REF_C)
       : null;
   const workHrNormalized =
     workHrAvg != null
-      ? workHrAvg - TEMP_HR_SLOPE * ((tempC ?? TEMP_REF_C) - TEMP_REF_C)
+      ? workHrAvg - TEMP_HR_SLOPE_FALLBACK * ((tempC ?? TEMP_REF_C) - TEMP_REF_C)
       : null;
 
   const workSpeedKmh =
@@ -714,6 +887,19 @@ export function buildAdvancedRunAnalysis(activities: RunActivity[]): AdvancedRun
   if (sessionDrafts.length === 0) return null;
 
   const startDate = parseISO(sessionDrafts[0].date);
+  const daysFromStart = sessionDrafts.map((session) =>
+    differenceInCalendarDays(parseISO(session.date), startDate)
+  );
+
+  for (const session of sessionDrafts) {
+    session.sessionType = inferType(session);
+  }
+
+  const temperatureHrModel = fitTemperatureHrModel(sessionDrafts, daysFromStart);
+  for (const session of sessionDrafts) {
+    applyTemperatureNormalization(session, temperatureHrModel.slopeBpmPerC);
+  }
+
   const hrMaxReference =
     quantile(
       sessionDrafts
@@ -723,8 +909,6 @@ export function buildAdvancedRunAnalysis(activities: RunActivity[]): AdvancedRun
     ) ?? null;
 
   for (const session of sessionDrafts) {
-    session.sessionType = inferType(session);
-
     if (hrMaxReference != null && session.hrNormalized != null && hrMaxReference > 60) {
       const hrIntensity = clamp((session.hrNormalized - 60) / (hrMaxReference - 60), 0.3, 1.0);
       session.trimp = session.durationUsedMin * hrIntensity * 0.64 * Math.exp(1.92 * hrIntensity);
@@ -841,10 +1025,6 @@ export function buildAdvancedRunAnalysis(activities: RunActivity[]): AdvancedRun
       (currentSession.workEfNorm - neighborMedian) / (neighborMad * 1.4826);
   }
 
-  const daysFromStart = sessionDrafts.map((session) =>
-    differenceInCalendarDays(parseISO(session.date), startDate)
-  );
-
   const trend = simpleLinearRegression(
     sessionDrafts
       .map((session, index) => ({
@@ -892,8 +1072,9 @@ export function buildAdvancedRunAnalysis(activities: RunActivity[]): AdvancedRun
       color: ADVANCED_RUN_TYPE_COLORS[label] ?? "#94a3b8",
     }));
 
-  const hrSlope = paceAdjustedHrSlopePerMonth(sessionDrafts, daysFromStart);
+  const hrSlope = paceAdjustedHrSlopePerMonthCalibrated(sessionDrafts, daysFromStart);
   const maxDays = daysFromStart[daysFromStart.length - 1] ?? 0;
+  const analysisSpanDays = maxDays > 0 ? maxDays + 1 : 0;
 
   const sessions: AdvancedRunSessionAnalysis[] = sessionDrafts.map((session, index) => ({
     id: session.id,
@@ -948,12 +1129,12 @@ export function buildAdvancedRunAnalysis(activities: RunActivity[]): AdvancedRun
   const efTrendPercent =
     trend != null &&
     trend.intercept > EPSILON &&
-    maxDays > 0
-      ? ((trend.intercept + trend.slopePerDay * maxDays - trend.intercept) / trend.intercept) * 100
+    analysisSpanDays > 0
+      ? ((trend.intercept + trend.slopePerDay * analysisSpanDays - trend.intercept) / trend.intercept) * 100
       : null;
   const efTrendPercentPerMonth =
-    efTrendPercent != null && maxDays > 0
-      ? efTrendPercent / (maxDays / 30)
+    efTrendPercent != null && analysisSpanDays > 0
+      ? efTrendPercent / (analysisSpanDays / 30)
       : null;
 
   const milestones: AdvancedRunMilestone[] = [];
@@ -991,6 +1172,9 @@ export function buildAdvancedRunAnalysis(activities: RunActivity[]): AdvancedRun
       efTrendPercentPerMonth,
       hrSamePaceSlopeBpmPerMonth: hrSlope.slopeBpmPerMonth,
       hrSamePaceCount: hrSlope.count,
+      temperatureHrSlopeBpmPerC: temperatureHrModel.slopeBpmPerC,
+      temperatureModelR2: temperatureHrModel.rSquared,
+      temperatureModelCount: temperatureHrModel.sampleCount,
     },
   };
 }

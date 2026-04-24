@@ -23,6 +23,8 @@ const COMP_COLORS = {
   moderada: "#86efac",
   fraca: "#f87171",
 } as const;
+const COMP_NEIGHBOR_DOT = "#93c5fd";
+const COMP_SELECTED_DOT = "#facc15";
 
 function formatShortDate(value: string) {
   return format(parseISO(value), "dd/MM/yy");
@@ -559,6 +561,17 @@ function ComparatorSection({
                 <Text className="text-surface-500 text-[10px] font-semibold uppercase tracking-widest">
                   5 sessões mais estruturalmente similares
                 </Text>
+                <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
+                  <View className="flex-row items-center gap-1.5">
+                    <View className="w-2 h-2 rounded-full" style={{ backgroundColor: COMP_SELECTED_DOT }} />
+                    <Text className="text-surface-500 text-[10px]">sessão selecionada</Text>
+                  </View>
+                  <View className="flex-row items-center gap-1.5">
+                    <View className="w-2 h-2 rounded-full" style={{ backgroundColor: COMP_NEIGHBOR_DOT }} />
+                    <Text className="text-surface-500 text-[10px]">vizinha</Text>
+                  </View>
+                  <Text className="text-surface-500 text-[10px]">barra = escala relativa de EF_norm</Text>
+                </View>
                 {neighbors.map(({ session }) => {
                   const delta =
                     selectedSession.workEfNorm != null &&
@@ -594,15 +607,16 @@ function ComparatorSection({
                             left: `${clamp(neighborDot, 0, 100)}%`,
                             marginLeft: -5,
                             top: 6,
-                            backgroundColor: ADVANCED_RUN_TYPE_COLORS[session.sessionType] ?? "#94a3b8",
+                            backgroundColor: COMP_NEIGHBOR_DOT,
                           }}
                         />
                         <View
-                          className="absolute w-2.5 h-2.5 rounded-full bg-amber-300"
+                          className="absolute w-2.5 h-2.5 rounded-full"
                           style={{
                             left: `${clamp(selectedDot, 0, 100)}%`,
                             marginLeft: -5,
                             top: 6,
+                            backgroundColor: COMP_SELECTED_DOT,
                           }}
                         />
                       </View>
@@ -861,7 +875,7 @@ export function AdvancedRunAnalysisSection({
   chartWidth: number;
 }) {
   const analysis = useMemo(() => buildAdvancedRunAnalysis(activities), [activities]);
-  const wideCards = chartWidth >= 900;
+  const summaryCardWidth: number | `${number}%` = chartWidth >= 1200 ? "24%" : chartWidth >= 700 ? "49%" : "100%";
 
   if (!analysis) {
     return (
@@ -890,7 +904,7 @@ export function AdvancedRunAnalysisSection({
                 : "Sem tendência suficiente."
             }
             valueColor="text-amber-300"
-            width={wideCards ? "32%" : "100%"}
+            width={summaryCardWidth}
           />
           <SummaryCard
             label="FC normalizada no mesmo pace"
@@ -904,13 +918,19 @@ export function AdvancedRunAnalysisSection({
                 ? "Longão contínuo com ajuste por pace."
                 : "Dados insuficientes para o ajuste."
             }
-            width={wideCards ? "32%" : "100%"}
+            width={summaryCardWidth}
           />
           <SummaryCard
             label="Comparações estruturais"
             value={`${analysis.summary.comparableSessions}/${analysis.summary.totalSessions}`}
             hint="Fortes + moderadas sobre a base total."
-            width={wideCards ? "32%" : "100%"}
+            width={summaryCardWidth}
+          />
+          <SummaryCard
+            label="Sessões com flag de qualidade"
+            value={`${analysis.summary.flaggedSessions}/${analysis.summary.totalSessions}`}
+            hint="Duração recomputada ou FC/temp ausentes."
+            width={summaryCardWidth}
           />
         </View>
       </AdvancedPanel>
