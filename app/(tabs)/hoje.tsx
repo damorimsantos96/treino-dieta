@@ -21,7 +21,6 @@ import { DailyLog } from "@/types";
 type ActivityEntry = { label: string; key: keyof DailyLog; icon: string };
 
 const ACTIVITIES: ActivityEntry[] = [
-  { label: "Academia", key: "kcal_academia", icon: "🏋️" },
   { label: "Boxe", key: "kcal_boxe", icon: "🥊" },
   { label: "Surf", key: "kcal_surf", icon: "🏄" },
   { label: "Ciclismo", key: "kcal_ciclismo", icon: "🚴" },

@@ -43,7 +43,6 @@ export function calculateTDEE(
   const dailyActive = (bmrDay * 1.25 - caloSleep) / (24 * 60);
 
   const totalActivityMin =
-    (log.min_academia ?? 0) +
     (log.min_boxe ?? 0) +
     (log.min_surf ?? 0) +
     (log.min_corrida ?? 0) +
@@ -55,7 +54,6 @@ export function calculateTDEE(
   const nonActiveMin = 24 * 60 - totalActivityMin;
 
   const totalActivityKcal =
-    (log.kcal_academia ?? 0) +
     (log.kcal_boxe ?? 0) +
     (log.kcal_surf ?? 0) +
     (log.kcal_corrida ?? 0) +
@@ -72,11 +70,11 @@ export function calculateWaterMl(log: DailyLog): number {
   const weight = log.weight_kg;
   if (!weight) return 0;
 
-  const basal = 40 * weight * tempFactor(log.temp_academia);
+  const basal = 40 * weight * tempFactor(log.temp_musculacao);
 
-  const academia =
-    SWEAT_RATE_ML_MIN * (log.min_academia ?? 0) * 0.4 *
-    hrFactor(log.bpm_academia) * tempFactor(log.temp_academia);
+  const musculacao =
+    SWEAT_RATE_ML_MIN * (log.min_musculacao ?? 0) * 0.4 *
+    hrFactor(log.bpm_musculacao) * tempFactor(log.temp_musculacao);
 
   const boxe =
     SWEAT_RATE_ML_MIN * (log.min_boxe ?? 0) * 0.8 *
@@ -105,7 +103,7 @@ export function calculateWaterMl(log: DailyLog): number {
     SWEAT_RATE_ML_MIN * (log.min_sauna ?? 0) *
     (0.3 * hrFactor(log.bpm_sauna) + 0.7 * taxaFatorTemp);
 
-  return (basal + academia + boxe + surf + corrida + ciclismo + outros + sauna) * 1.05;
+  return (basal + musculacao + boxe + surf + corrida + ciclismo + outros + sauna) * 1.05;
 }
 
 export function calculateMinProtein(weight: number | null): number {
@@ -130,12 +128,12 @@ export function computeDailyCalculations(
   user: UserMetrics
 ): DailyCalculations {
   const totalActivityMin =
-    (log.min_academia ?? 0) + (log.min_boxe ?? 0) + (log.min_surf ?? 0) +
+    (log.min_boxe ?? 0) + (log.min_surf ?? 0) +
     (log.min_corrida ?? 0) + (log.min_crossfit ?? 0) + (log.min_musculacao ?? 0) +
     (log.min_ciclismo ?? 0) + (log.min_outros ?? 0) + (log.min_sauna ?? 0);
 
   const totalActivityKcal =
-    (log.kcal_academia ?? 0) + (log.kcal_boxe ?? 0) + (log.kcal_surf ?? 0) +
+    (log.kcal_boxe ?? 0) + (log.kcal_surf ?? 0) +
     (log.kcal_corrida ?? 0) + (log.kcal_crossfit ?? 0) + (log.kcal_musculacao ?? 0) +
     (log.kcal_ciclismo ?? 0) + (log.kcal_outros ?? 0) + (log.whoop_kcal ?? 0);
 

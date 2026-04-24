@@ -21,7 +21,7 @@ import { ProviderSyncPanel } from "@/components/ProviderSyncPanel";
 import { computeDailyCalculations, formatWater } from "@/utils/calculations";
 import { Ionicons } from "@expo/vector-icons";
 
-type ActivityKey = "academia" | "boxe" | "surf" | "ciclismo" | "crossfit" | "musculacao";
+type ActivityKey = "boxe" | "surf" | "ciclismo" | "crossfit" | "musculacao";
 
 const ACTIVITIES: {
   key: ActivityKey;
@@ -29,19 +29,16 @@ const ACTIVITIES: {
   icon: string;
   hasTempBpm: boolean;
 }[] = [
-  { key: "academia", label: "Academia", icon: "🏋️", hasTempBpm: true },
   { key: "boxe", label: "Boxe", icon: "🥊", hasTempBpm: true },
   { key: "surf", label: "Surf", icon: "🏄", hasTempBpm: true },
   { key: "ciclismo", label: "Ciclismo", icon: "🚴", hasTempBpm: true },
   { key: "crossfit", label: "CrossFit", icon: "⚡", hasTempBpm: false },
-  { key: "musculacao", label: "Musculação", icon: "💪", hasTempBpm: false },
+  { key: "musculacao", label: "Musculação", icon: "💪", hasTempBpm: true },
 ];
 
 type FormState = {
   weight: string;
   surplus: string;
-  // academia
-  kcal_academia: string; min_academia: string; temp_academia: string; bpm_academia: string;
   // boxe
   kcal_boxe: string; min_boxe: string; temp_boxe: string; bpm_boxe: string;
   // surf
@@ -50,8 +47,8 @@ type FormState = {
   kcal_ciclismo: string; min_ciclismo: string; temp_ciclismo: string; bpm_ciclismo: string;
   // crossfit (no temp/bpm in DB)
   kcal_crossfit: string; min_crossfit: string;
-  // musculacao (no temp/bpm in DB)
-  kcal_musculacao: string; min_musculacao: string;
+  // musculacao
+  kcal_musculacao: string; min_musculacao: string; temp_musculacao: string; bpm_musculacao: string;
   // sauna
   min_sauna: string; temp_sauna: string; bpm_sauna: string;
   // outros
@@ -60,12 +57,11 @@ type FormState = {
 
 const EMPTY_FORM: FormState = {
   weight: "", surplus: "",
-  kcal_academia: "", min_academia: "", temp_academia: "", bpm_academia: "",
   kcal_boxe: "", min_boxe: "", temp_boxe: "", bpm_boxe: "",
   kcal_surf: "", min_surf: "", temp_surf: "", bpm_surf: "",
   kcal_ciclismo: "", min_ciclismo: "", temp_ciclismo: "", bpm_ciclismo: "",
   kcal_crossfit: "", min_crossfit: "",
-  kcal_musculacao: "", min_musculacao: "",
+  kcal_musculacao: "", min_musculacao: "", temp_musculacao: "", bpm_musculacao: "",
   min_sauna: "", temp_sauna: "", bpm_sauna: "",
   kcal_outros: "",
 };
@@ -164,6 +160,17 @@ function str(v: number | null | undefined): string {
   return v != null ? v.toString() : "";
 }
 
+function sumNullable(...values: Array<number | null | undefined>): number | null {
+  let total = 0;
+  let hasValue = false;
+  for (const value of values) {
+    if (value == null) continue;
+    total += value;
+    hasValue = true;
+  }
+  return hasValue ? total : null;
+}
+
 function validateNumber(
   value: string,
   label: string,
@@ -224,15 +231,15 @@ export default function RegistrarScreen() {
       }
       const active = new Set<ActivityKey>();
       ACTIVITIES.forEach(({ key }) => {
-        const val = existing[`min_${key}` as keyof DailyLog];
+        const val = key === "musculacao"
+          ? sumNullable(existing.min_musculacao, existing.min_academia)
+          : existing[`min_${key}` as keyof DailyLog];
         if (typeof val === "number" && val > 0) active.add(key);
       });
       setSelectedActivities(active);
       setForm({
         weight: str(existing.weight_kg),
         surplus: str(existing.surplus_deficit_kcal),
-        kcal_academia: str(existing.kcal_academia), min_academia: str(existing.min_academia),
-        temp_academia: str(existing.temp_academia), bpm_academia: str(existing.bpm_academia),
         kcal_boxe: str(existing.kcal_boxe), min_boxe: str(existing.min_boxe),
         temp_boxe: str(existing.temp_boxe), bpm_boxe: str(existing.bpm_boxe),
         kcal_surf: str(existing.kcal_surf), min_surf: str(existing.min_surf),
@@ -240,7 +247,10 @@ export default function RegistrarScreen() {
         kcal_ciclismo: str(existing.kcal_ciclismo), min_ciclismo: str(existing.min_ciclismo),
         temp_ciclismo: str(existing.temp_ciclismo), bpm_ciclismo: str(existing.bpm_ciclismo),
         kcal_crossfit: str(existing.kcal_crossfit), min_crossfit: str(existing.min_crossfit),
-        kcal_musculacao: str(existing.kcal_musculacao), min_musculacao: str(existing.min_musculacao),
+        kcal_musculacao: str(sumNullable(existing.kcal_musculacao, existing.kcal_academia)),
+        min_musculacao: str(sumNullable(existing.min_musculacao, existing.min_academia)),
+        temp_musculacao: str(existing.temp_musculacao ?? existing.temp_academia),
+        bpm_musculacao: str(existing.bpm_musculacao ?? existing.bpm_academia),
         min_sauna: str(existing.min_sauna), temp_sauna: str(existing.temp_sauna),
         bpm_sauna: str(existing.bpm_sauna), kcal_outros: str(existing.kcal_outros),
       });
@@ -265,10 +275,10 @@ export default function RegistrarScreen() {
   const previewLog: DailyLog = {
     id: "", user_id: "", date: format(today, "yyyy-MM-dd"),
     weight_kg: weightNum,
-    kcal_academia: selectedActivities.has("academia") ? num(form.kcal_academia) : null,
-    min_academia: selectedActivities.has("academia") ? num(form.min_academia) : null,
-    temp_academia: selectedActivities.has("academia") ? num(form.temp_academia) : null,
-    bpm_academia: selectedActivities.has("academia") ? num(form.bpm_academia) : null,
+    kcal_academia: null,
+    min_academia: null,
+    temp_academia: null,
+    bpm_academia: null,
     kcal_boxe: selectedActivities.has("boxe") ? num(form.kcal_boxe) : null,
     min_boxe: selectedActivities.has("boxe") ? num(form.min_boxe) : null,
     temp_boxe: selectedActivities.has("boxe") ? num(form.temp_boxe) : null,
@@ -285,8 +295,9 @@ export default function RegistrarScreen() {
     min_crossfit: selectedActivities.has("crossfit") ? num(form.min_crossfit) : null,
     kcal_musculacao: selectedActivities.has("musculacao") ? num(form.kcal_musculacao) : null,
     min_musculacao: selectedActivities.has("musculacao") ? num(form.min_musculacao) : null,
+    temp_musculacao: selectedActivities.has("musculacao") ? num(form.temp_musculacao) : null,
     bpm_crossfit: existing?.bpm_crossfit ?? null,
-    bpm_musculacao: existing?.bpm_musculacao ?? null,
+    bpm_musculacao: selectedActivities.has("musculacao") ? num(form.bpm_musculacao) : null,
     kcal_corrida: null, min_corrida: null, temp_corrida: null, bpm_corrida: null,
     kcal_outros: num(form.kcal_outros),
     min_outros: existing?.min_outros ?? null,
@@ -342,6 +353,10 @@ export default function RegistrarScreen() {
       temp_sauna: num(form.temp_sauna),
       bpm_sauna: num(form.bpm_sauna),
       kcal_outros: num(form.kcal_outros),
+      kcal_academia: null,
+      min_academia: null,
+      temp_academia: null,
+      bpm_academia: null,
     };
 
     ACTIVITIES.forEach(({ key, hasTempBpm }) => {
