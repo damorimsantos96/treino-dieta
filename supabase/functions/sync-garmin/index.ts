@@ -486,7 +486,10 @@ async function importActivity(supabaseAdmin: any, userId: string, session: Garmi
   const date = activityDate(activity);
   if (!id || !date) return null;
 
-  const laps = await fetchGarminLaps(session, id);
+  const [laps, temperatureC] = await Promise.all([
+    fetchGarminLaps(session, id),
+    fetchGarminActivityTemperature(session, id),
+  ]);
   const activityDistanceKm = metersToKm(activity.distance);
   const intervals = normalizeLaps(laps.length ? laps : [activity], date, id, activityDistanceKm);
   const totalKm = intervals.reduce((sum, interval) => sum + (interval.distance_km ?? 0), 0);
@@ -507,7 +510,7 @@ async function importActivity(supabaseAdmin: any, userId: string, session: Garmi
       avg_pace_min_km: totalKm > 0 && totalMin > 0 ? totalMin / totalKm : null,
       avg_hr: avgHr ?? activity.averageHR ?? null,
       max_hr: maxHr,
-      thermal_sensation_c: activity.temperatureC ?? activity.avgTemperature ?? null,
+      thermal_sensation_c: temperatureC,
       calories_kcal: null,
     }, { onConflict: "user_id,source,external_id" })
     .select("id, date")
@@ -543,6 +546,16 @@ async function importActivity(supabaseAdmin: any, userId: string, session: Garmi
   return savedActivity;
 }
 
+function isArtifactLap(lap: any): boolean {
+  const durationMin: number = lap?.duration_min ?? 0;
+  const distanceKm: number = lap?.distance_km ?? 0;
+  const pace: number | null = lap?.pace_min_km ?? null;
+  if (distanceKm <= 0.05) return false;
+  if (durationMin === 0) return true;
+  if (pace !== null && Number.isFinite(pace) && pace < 1.0) return true;
+  return false;
+}
+
 function normalizeLaps(laps: any[], date: string, activityIdValue: string, activityDistanceKm: number) {
   const normalized = laps.map((lap, index) => {
     const distanceKm = metersToKm(lap.distance ?? lap.totalDistance ?? lap.distanceMeters);
@@ -567,12 +580,14 @@ function normalizeLaps(laps: any[], date: string, activityIdValue: string, activ
     };
   });
 
-  // Remove trailing artifact laps in a loop — Garmin occasionally appends more than one.
-  while (normalized.length > 1 && shouldSkipTrailingSummaryLap(normalized, activityDistanceKm)) {
-    normalized.pop();
+  const filtered = normalized.filter((lap) => !isArtifactLap(lap));
+
+  // Remove trailing summary laps — Garmin occasionally appends more than one.
+  while (filtered.length > 1 && shouldSkipTrailingSummaryLap(filtered, activityDistanceKm)) {
+    filtered.pop();
   }
 
-  return normalized;
+  return filtered;
 }
 
 function shouldSkipTrailingSummaryLap(intervals: any[], activityDistanceKm: number): boolean {
@@ -1015,6 +1030,20 @@ async function fetchGarminLaps(session: GarminSession, activityIdValue: string) 
   }
 
   return [];
+}
+
+async function fetchGarminActivityTemperature(session: GarminSession, activityIdValue: string): Promise<number | null> {
+  const headers = garminApiHeaders(session, "bearer");
+  if (!headers) return null;
+  try {
+    const res = await fetch(`${GARMIN_CONNECT_API_URL}/activity-service/activity/${activityIdValue}/weather`, { headers });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const temp = data.temperatureC ?? data.temperature ?? null;
+    return temp !== null && temp !== undefined ? Number(temp) : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Cookie helpers (kept for legacy cached sessions that still have cookies) ──
