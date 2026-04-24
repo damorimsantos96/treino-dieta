@@ -25,6 +25,7 @@
 - `npm run typecheck` Ã¢â‚¬â€ TS validation
 - `npm run doctor` Ã¢â‚¬â€ Expo Doctor
 - `npm run check` Ã¢â‚¬â€ env check + typecheck + doctor + audit
+- `npm run check` stops at the first failing step. If it stops at `expo-doctor` because of pre-existing Expo SDK 55 patch-version alignment warnings, report that the full check did not complete, run `npm run audit:app` separately, and do not update Expo/RN/SDK dependencies as part of an unrelated change.
 - `npm run check:build-env` Ã¢â‚¬â€ validates Supabase env before builds
 - `npm run check:supabase` Ã¢â‚¬â€ validates DNS and `/auth/v1/health`
 - `npm run check:functions:garmin` Ã¢â‚¬â€ Deno type-check for Garmin function
