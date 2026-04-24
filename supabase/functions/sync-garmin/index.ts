@@ -628,6 +628,10 @@ function classifyLap(lap: any): string {
   return "Easy";
 }
 
+function fahrenheitToCelsius(f: number): number {
+  return Math.round(((f - 32) * 5) / 9 * 10) / 10;
+}
+
 function weightedHr(intervals: any[]) {
   let numerator = 0;
   let denominator = 0;
@@ -643,19 +647,34 @@ function weightedHr(intervals: any[]) {
 async function syncRunMinutesToDaily(supabaseAdmin: any, userId: string, date: string) {
   const { data: activities, error } = await supabaseAdmin
     .from("run_activities")
-    .select("duration_min")
+    .select("duration_min, avg_hr, thermal_sensation_c")
     .eq("user_id", userId)
     .eq("date", date);
   if (error) throw dbError("garmin_daily_minutes_select", error);
 
-  const minCorrida = (activities ?? []).reduce(
-    (sum: number, activity: any) => sum + (activity.duration_min ?? 0),
-    0
-  ) || null;
+  const rows: any[] = activities ?? [];
+
+  const minCorrida = rows.reduce((sum, a) => sum + (a.duration_min ?? 0), 0) || null;
+
+  // Weighted avg HR by duration (Garmin is authoritative for corrida HR)
+  let hrNumerator = 0, hrDenominator = 0;
+  for (const a of rows) {
+    if (!a.avg_hr) continue;
+    const dur = a.duration_min ?? 1;
+    hrNumerator += a.avg_hr * dur;
+    hrDenominator += dur;
+  }
+  const bpmCorrida = hrDenominator > 0 ? Math.round(hrNumerator / hrDenominator) : null;
+
+  // Thermal sensation: use first activity's value (all runs on same day share weather)
+  const tempCorrida = rows.find((a) => a.thermal_sensation_c !== null)?.thermal_sensation_c ?? null;
 
   const { error: upsertError } = await supabaseAdmin
     .from("daily_logs")
-    .upsert({ user_id: userId, date, min_corrida: minCorrida }, { onConflict: "user_id,date" });
+    .upsert(
+      { user_id: userId, date, min_corrida: minCorrida, bpm_corrida: bpmCorrida, temp_corrida: tempCorrida },
+      { onConflict: "user_id,date" }
+    );
   if (upsertError) throw dbError("garmin_daily_minutes_upsert", upsertError);
 }
 
@@ -1047,8 +1066,8 @@ async function fetchGarminActivityTemperature(session: GarminSession, activityId
     console.log(`[sync-garmin] weather-service status=${res.status} body=${text.slice(0, 400)}`);
     if (res.ok) {
       const data = JSON.parse(text);
-      const temp = data.apparentTemp ?? data.temp ?? null;
-      if (temp !== null && temp !== undefined) return Number(temp);
+      const raw = data.apparentTemp ?? data.temp ?? null;
+      if (raw !== null && raw !== undefined) return fahrenheitToCelsius(Number(raw));
     }
   } catch (e) {
     console.warn(`[sync-garmin] weather-service error: ${e}`);
