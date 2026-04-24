@@ -95,7 +95,6 @@ function AvaBootsCard({ recommendation }: { recommendation: AvaBootsRecommendati
             <Text className="text-surface-400 text-xs flex-1">{item}</Text>
           </View>
         ))}
-        <Text className="text-surface-500 text-[11px] mt-1">{recommendation.caution}</Text>
       </View>
     </Card>
   );
@@ -186,32 +185,31 @@ export default function HojeScreen() {
         </View>
       </View>
 
-      {!isLoading && avaBootsRecommendation && (
-        <AvaBootsCard recommendation={avaBootsRecommendation} />
-      )}
-
       {isLoading ? (
         <View className="items-center py-20">
           <ActivityIndicator color="#10b981" size="large" />
         </View>
       ) : !log ? (
-        <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-8 items-center gap-4">
-          <View className="w-16 h-16 rounded-2xl bg-brand-500/10 border border-brand-500/20 items-center justify-center">
-            <Text className="text-3xl">📋</Text>
+        <>
+          <View className="bg-surface-800 border border-surface-700/60 rounded-2xl p-8 items-center gap-4">
+            <View className="w-16 h-16 rounded-2xl bg-brand-500/10 border border-brand-500/20 items-center justify-center">
+              <Text className="text-3xl">📋</Text>
+            </View>
+            <View className="items-center gap-1">
+              <Text className="text-white text-base font-bold">Nenhum dado hoje</Text>
+              <Text className="text-surface-500 text-sm text-center">
+                Registre seu treino para ver as métricas
+              </Text>
+            </View>
+            <TouchableOpacity
+              className="bg-brand-500 rounded-xl px-8 py-3 mt-1"
+              onPress={() => router.push({ pathname: "/(tabs)/registrar", params: { date: dateStr } })}
+            >
+              <Text className="text-white font-bold text-sm">Registrar agora</Text>
+            </TouchableOpacity>
           </View>
-          <View className="items-center gap-1">
-            <Text className="text-white text-base font-bold">Nenhum dado hoje</Text>
-            <Text className="text-surface-500 text-sm text-center">
-              Registre seu treino para ver as métricas
-            </Text>
-          </View>
-          <TouchableOpacity
-            className="bg-brand-500 rounded-xl px-8 py-3 mt-1"
-            onPress={() => router.push({ pathname: "/(tabs)/registrar", params: { date: dateStr } })}
-          >
-            <Text className="text-white font-bold text-sm">Registrar agora</Text>
-          </TouchableOpacity>
-        </View>
+          {avaBootsRecommendation && <AvaBootsCard recommendation={avaBootsRecommendation} />}
+        </>
       ) : (
         <>
           {/* ── Hero: Balanço Calórico ────────────────────── */}
@@ -375,6 +373,8 @@ export default function HojeScreen() {
               )}
             </View>
           )}
+
+          {avaBootsRecommendation && <AvaBootsCard recommendation={avaBootsRecommendation} />}
 
           {/* ── Edit button ──────────────────────────────── */}
           <TouchableOpacity
