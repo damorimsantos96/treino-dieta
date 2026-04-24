@@ -145,7 +145,7 @@ function SyncedStat({ label, value, unit }: { label: string; value: string | num
         className="flex-row items-center bg-surface-700/30 border border-surface-700/50 rounded-xl px-3 py-2.5"
         style={{ minWidth: 0 }}
       >
-        <Text className="flex-1 text-surface-300 text-sm" style={{ minWidth: 0 }}>
+        <Text className="flex-1 text-white text-sm" style={{ minWidth: 0 }}>
           {String(value)}
         </Text>
         {unit && (
@@ -545,16 +545,18 @@ export default function RegistrarScreen() {
                   <SyncedStat label="Duração" value={existing.min_corrida} unit="min" />
                 )}
               </View>
-              {(existing?.temp_corrida != null || existing?.bpm_corrida != null) && (
-                <View className="flex-row gap-2">
-                  {existing.temp_corrida != null && (
-                    <SyncedStat label="Temperatura" value={existing.temp_corrida} unit="°C" />
-                  )}
-                  {existing.bpm_corrida != null && (
-                    <SyncedStat label="FC média" value={existing.bpm_corrida} unit="bpm" />
-                  )}
-                </View>
-              )}
+              <View className="flex-row gap-2">
+                <SyncedStat
+                  label="Temperatura"
+                  value={existing?.temp_corrida != null ? existing.temp_corrida : "—"}
+                  unit={existing?.temp_corrida != null ? "°C" : undefined}
+                />
+                <SyncedStat
+                  label="FC média"
+                  value={existing?.bpm_corrida != null ? existing.bpm_corrida : "—"}
+                  unit={existing?.bpm_corrida != null ? "bpm" : undefined}
+                />
+              </View>
             </View>
           )}
 
