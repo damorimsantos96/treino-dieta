@@ -1,3 +1,68 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  scrollbar-color: rgba(114, 115, 127, 0.72) rgba(15, 16, 20, 0.72);
+  scrollbar-width: thin;
+}
+
+* {
+  scrollbar-color: rgba(114, 115, 127, 0.72) rgba(15, 16, 20, 0.72);
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #0f1014;
+  border-left: 1px solid rgba(44, 45, 54, 0.85);
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 44px;
+  background: linear-gradient(180deg, #72737f, #4a4b58);
+  border: 3px solid #0f1014;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #a0a1aa, #72737f);
+}
+
+*::-webkit-scrollbar-corner {
+  background: #0f1014;
+}
+
+.app-scrollbar::-webkit-scrollbar,
+.app-scrollbar *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.app-scrollbar::-webkit-scrollbar-track,
+.app-scrollbar *::-webkit-scrollbar-track {
+  background: rgba(9, 9, 12, 0.68);
+  border-left: 1px solid rgba(44, 45, 54, 0.7);
+  border-radius: 999px;
+}
+
+.app-scrollbar::-webkit-scrollbar-thumb,
+.app-scrollbar *::-webkit-scrollbar-thumb {
+  background: rgba(114, 115, 127, 0.8);
+  border: 2px solid rgba(9, 9, 12, 0.92);
+  border-radius: 999px;
+}
+
+.app-scrollbar::-webkit-scrollbar-thumb:hover,
+.app-scrollbar *::-webkit-scrollbar-thumb:hover {
+  background: #a0a1aa;
+}
+
+.app-scrollbar-compact {
+  scrollbar-color: rgba(160, 161, 170, 0.72) rgba(9, 9, 12, 0.55);
+}
