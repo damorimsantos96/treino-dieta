@@ -507,7 +507,7 @@ async function importActivity(supabaseAdmin: any, userId: string, session: Garmi
       avg_pace_min_km: totalKm > 0 && totalMin > 0 ? totalMin / totalKm : null,
       avg_hr: avgHr ?? activity.averageHR ?? null,
       max_hr: maxHr,
-      thermal_sensation_c: null,
+      thermal_sensation_c: activity.temperatureC ?? activity.avgTemperature ?? null,
       calories_kcal: null,
     }, { onConflict: "user_id,source,external_id" })
     .select("id, date")
