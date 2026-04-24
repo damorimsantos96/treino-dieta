@@ -1035,15 +1035,32 @@ async function fetchGarminLaps(session: GarminSession, activityIdValue: string) 
 async function fetchGarminActivityTemperature(session: GarminSession, activityIdValue: string): Promise<number | null> {
   const headers = garminApiHeaders(session, "bearer");
   if (!headers) return null;
-  try {
-    const res = await fetch(`${GARMIN_CONNECT_API_URL}/activity-service/activity/${activityIdValue}/weather`, { headers });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const temp = data.temperatureC ?? data.temperature ?? null;
-    return temp !== null && temp !== undefined ? Number(temp) : null;
-  } catch {
-    return null;
+
+  const endpoints = [
+    `${GARMIN_CONNECT_API_URL}/activity-service/activity/${activityIdValue}`,
+    `${GARMIN_CONNECT_API_URL}/activity-service/activity/${activityIdValue}/weather`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, { headers });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const temp =
+        data.summaryDTO?.temperature ??
+        data.summaryDTO?.temperatureC ??
+        data.summaryDTO?.avgTemperature ??
+        data.temperatureC ??
+        data.temperature ??
+        data.avgTemperature ??
+        null;
+      if (temp !== null && temp !== undefined) return Number(temp);
+    } catch {
+      continue;
+    }
   }
+
+  return null;
 }
 
 // ── Cookie helpers (kept for legacy cached sessions that still have cookies) ──
