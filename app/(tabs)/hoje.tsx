@@ -10,9 +10,12 @@ import {
 import { router, useFocusEffect } from "expo-router";
 import { addDays, format, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { useQuery } from "@tanstack/react-query";
 import { useDailyLog } from "@/hooks/useDailyLog";
 import { useUserMetrics } from "@/hooks/useUserProfile";
+import { getDailyLogs } from "@/lib/api";
 import { computeDailyCalculations, formatWater, formatDuration } from "@/utils/calculations";
+import { AvaBootsRecommendation, selectAvaBootsProtocol } from "@/utils/avaboots";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { Card, SectionLabel } from "@/components/ui/Card";
 import { Ionicons } from "@expo/vector-icons";
@@ -37,6 +40,67 @@ function recoveryColor(pct: number): string {
   return "#f43f5e";
 }
 
+function AvaBootsCard({ recommendation }: { recommendation: AvaBootsRecommendation }) {
+  return (
+    <Card className="gap-4">
+      <View className="flex-row items-start justify-between gap-3">
+        <View className="flex-1">
+          <SectionLabel label="AvaBoots" />
+          <Text className="text-white text-lg font-bold tracking-tight">
+            {recommendation.title}
+          </Text>
+          <Text className="text-surface-500 text-xs mt-1">
+            Proximo treino estimado em{" "}
+            {Math.max(0, Math.round(recommendation.minutesUntilTraining / 60))} h
+          </Text>
+        </View>
+        <View className="w-11 h-11 rounded-xl bg-sky-500/10 border border-sky-500/20 items-center justify-center">
+          <Ionicons name="body-outline" size={22} color="#38bdf8" />
+        </View>
+      </View>
+
+      <View className="flex-row gap-2">
+        <View className="flex-1 bg-surface-700/50 border border-surface-600/40 rounded-xl p-3">
+          <Text className="text-surface-500 text-[10px] font-bold uppercase tracking-widest">
+            Tempo
+          </Text>
+          <Text className="text-white text-xl font-bold mt-1">{recommendation.duration} min</Text>
+        </View>
+        <View className="flex-1 bg-surface-700/50 border border-surface-600/40 rounded-xl p-3">
+          <Text className="text-surface-500 text-[10px] font-bold uppercase tracking-widest">
+            Pressao
+          </Text>
+          <Text className="text-white text-xl font-bold mt-1">{recommendation.pressure}</Text>
+          <Text className="text-surface-500 text-[10px]">mmHg</Text>
+        </View>
+        <View className="flex-1 bg-surface-700/50 border border-surface-600/40 rounded-xl p-3">
+          <Text className="text-surface-500 text-[10px] font-bold uppercase tracking-widest">
+            Modo
+          </Text>
+          <Text className="text-white text-xl font-bold mt-1">{recommendation.mode}</Text>
+          <Text className="text-surface-500 text-[10px]">{recommendation.modeLabel}</Text>
+        </View>
+      </View>
+
+      <View className="flex-row flex-wrap gap-2">
+        <Text className="text-surface-500 text-xs">Hoje {recommendation.todayLoad}/100</Text>
+        <Text className="text-surface-500 text-xs">Ontem {recommendation.yesterdayLoad}/100</Text>
+        <Text className="text-surface-500 text-xs">Amanha {recommendation.tomorrowLoad}/100</Text>
+      </View>
+
+      <View className="gap-1 border-t border-surface-700/50 pt-3">
+        {recommendation.rationale.slice(0, 2).map((item) => (
+          <View key={item} className="flex-row gap-2">
+            <Ionicons name="checkmark-circle" size={14} color="#10b981" />
+            <Text className="text-surface-400 text-xs flex-1">{item}</Text>
+          </View>
+        ))}
+        <Text className="text-surface-500 text-[11px] mt-1">{recommendation.caution}</Text>
+      </View>
+    </Card>
+  );
+}
+
 export default function HojeScreen() {
   const [today, setToday] = useState(() => new Date());
 
@@ -57,6 +121,22 @@ export default function HojeScreen() {
   const dateCapitalized = dateLabel.charAt(0).toUpperCase() + dateLabel.slice(1);
   const isToday = format(today, "yyyy-MM-dd") === format(new Date(), "yyyy-MM-dd");
   const dateStr = format(today, "yyyy-MM-dd");
+  const yesterdayStr = format(subDays(today, 1), "yyyy-MM-dd");
+
+  const { data: recentLogs = [] } = useQuery({
+    queryKey: ["daily_logs", "avaboots", dateStr],
+    queryFn: () => getDailyLogs(subDays(today, 56), today),
+    enabled: isToday,
+  });
+
+  const avaBootsRecommendation = isToday
+    ? selectAvaBootsProtocol({
+        todayLog: log,
+        yesterdayLog: recentLogs.find((item) => item.date === yesterdayStr),
+        historicalLogs: recentLogs.filter((item) => item.date !== dateStr),
+        now: new Date(),
+      })
+    : null;
 
   return (
     <ScrollView
@@ -105,6 +185,10 @@ export default function HojeScreen() {
           )}
         </View>
       </View>
+
+      {!isLoading && avaBootsRecommendation && (
+        <AvaBootsCard recommendation={avaBootsRecommendation} />
+      )}
 
       {isLoading ? (
         <View className="items-center py-20">
