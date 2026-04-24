@@ -875,7 +875,7 @@ export function AdvancedRunAnalysisSection({
   chartWidth: number;
 }) {
   const analysis = useMemo(() => buildAdvancedRunAnalysis(activities), [activities]);
-  const summaryCardWidth: number | `${number}%` = chartWidth >= 1200 ? "24%" : chartWidth >= 700 ? "49%" : "100%";
+  const wideCards = chartWidth >= 900;
 
   if (!analysis) {
     return (
@@ -904,7 +904,7 @@ export function AdvancedRunAnalysisSection({
                 : "Sem tendência suficiente."
             }
             valueColor="text-amber-300"
-            width={summaryCardWidth}
+            width={wideCards ? "32%" : "100%"}
           />
           <SummaryCard
             label="FC normalizada no mesmo pace"
@@ -918,19 +918,13 @@ export function AdvancedRunAnalysisSection({
                 ? "Longão contínuo com ajuste por pace."
                 : "Dados insuficientes para o ajuste."
             }
-            width={summaryCardWidth}
+            width={wideCards ? "32%" : "100%"}
           />
           <SummaryCard
             label="Comparações estruturais"
             value={`${analysis.summary.comparableSessions}/${analysis.summary.totalSessions}`}
             hint="Fortes + moderadas sobre a base total."
-            width={summaryCardWidth}
-          />
-          <SummaryCard
-            label="Sessões com flag de qualidade"
-            value={`${analysis.summary.flaggedSessions}/${analysis.summary.totalSessions}`}
-            hint="Duração recomputada ou FC/temp ausentes."
-            width={summaryCardWidth}
+            width={wideCards ? "32%" : "100%"}
           />
         </View>
       </AdvancedPanel>
