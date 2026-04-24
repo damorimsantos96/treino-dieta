@@ -491,7 +491,7 @@ async function importActivity(supabaseAdmin: any, userId: string, session: Garmi
     fetchGarminActivityTemperature(session, id),
   ]);
   const activityDistanceKm = metersToKm(activity.distance);
-  const intervals = normalizeLaps(laps.length ? laps : [activity], date, id, activityDistanceKm);
+  const intervals = normalizeLaps(laps.length ? laps : [activity], date, id, activityDistanceKm, temperatureC);
   const totalKm = intervals.reduce((sum, interval) => sum + (interval.distance_km ?? 0), 0);
   const totalMin = intervals.reduce((sum, interval) => sum + (interval.duration_min ?? 0), 0);
   const avgHr = weightedHr(intervals);
@@ -556,7 +556,7 @@ function isArtifactLap(lap: any): boolean {
   return false;
 }
 
-function normalizeLaps(laps: any[], date: string, activityIdValue: string, activityDistanceKm: number) {
+function normalizeLaps(laps: any[], date: string, activityIdValue: string, activityDistanceKm: number, thermalSensationC: number | null = null) {
   const normalized = laps.map((lap, index) => {
     const distanceKm = metersToKm(lap.distance ?? lap.totalDistance ?? lap.distanceMeters);
     const durationMin = durationSeconds(
@@ -572,7 +572,7 @@ function normalizeLaps(laps: any[], date: string, activityIdValue: string, activ
       pace_min_km: pace,
       avg_hr: lap.averageHR ?? lap.averageHr ?? lap.avgHr ?? null,
       max_hr: lap.maxHR ?? lap.maxHr ?? null,
-      thermal_sensation_c: null,
+      thermal_sensation_c: thermalSensationC,
       calories_kcal: null,
       garmin_activity_id: `${activityIdValue}_lap_${index + 1}`,
       external_id: `${activityIdValue}_lap_${index + 1}`,
