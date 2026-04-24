@@ -1,5 +1,6 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import { formatWater } from "@/utils/calculations";
 
 export const WATER_REMINDER_CHANNEL_ID = "water-reminders";
 const WATER_REMINDER_DATA_TAG = "water-reminder-scheduled";
@@ -62,56 +63,95 @@ export async function sendWaterReminderNotification(message: string) {
       title: "Hora de beber agua",
       body: message,
       sound: true,
-      data: {
-        screen: "agua",
-      },
+      data: { screen: "agua" },
     },
     trigger: null,
   });
 }
 
-export async function scheduleWaterReminderNotifications(settings: {
-  water_reminders_enabled: boolean;
-  water_start_time: string;
-  water_end_time: string;
-  water_reminder_interval_min: number;
-}) {
+function parseHM(clock: string): [number, number] {
+  const parts = clock.split(":").map(Number);
+  return [parts[0] ?? 0, parts[1] ?? 0];
+}
+
+async function cancelScheduledWaterNotifications() {
   const existing = await Notifications.getAllScheduledNotificationsAsync();
-  for (const notif of existing) {
-    if (notif.content.data?.tag === WATER_REMINDER_DATA_TAG) {
-      await Notifications.cancelScheduledNotificationAsync(notif.identifier);
-    }
-  }
+  await Promise.all(
+    existing
+      .filter((n) => n.content.data?.tag === WATER_REMINDER_DATA_TAG)
+      .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier))
+  );
+}
 
-  if (!settings.water_reminders_enabled) return;
-
-  const parseHM = (clock: string): [number, number] => {
-    const [h, m] = clock.split(":").map(Number);
-    return [h ?? 0, m ?? 0];
+/**
+ * Schedules DateTriggerInput notifications for remaining time slots today
+ * where the user is projected to be behind on water, based on their current
+ * consumption rate. Fired by the OS's AlarmManager — works even when app is killed.
+ *
+ * Call this whenever: app becomes active, water is logged, or settings change.
+ */
+export async function scheduleSmartWaterNotifications(params: {
+  settings: {
+    water_reminders_enabled: boolean;
+    water_start_time: string;
+    water_end_time: string;
+    water_reminder_interval_min: number;
   };
+  consumedMl: number;
+  targetMl: number;
+  now?: Date;
+}) {
+  await cancelScheduledWaterNotifications();
+
+  const { settings, consumedMl, targetMl } = params;
+  const now = params.now ?? new Date();
+
+  if (!settings.water_reminders_enabled || targetMl <= 0) return;
+  if (!(await notificationsAreEnabled())) return;
 
   const [startH, startM] = parseHM(settings.water_start_time);
   const [endH, endM] = parseHM(settings.water_end_time);
   const startMinutes = startH * 60 + startM;
   const endMinutes = endH * 60 + endM;
+  const totalWindowMinutes = endMinutes - startMinutes;
   const interval = Math.max(15, settings.water_reminder_interval_min);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  if (totalWindowMinutes <= 0 || nowMinutes >= endMinutes) return;
+
+  // Consumption rate since window opened (ml/min). Falls back to 0 if window hasn't started.
+  const elapsedWindowMinutes = Math.max(0, nowMinutes - startMinutes);
+  const ratePerMinute = elapsedWindowMinutes > 0 ? consumedMl / elapsedWindowMinutes : 0;
+
+  // First future slot boundary after now
+  let firstSlot = startMinutes;
+  while (firstSlot <= nowMinutes) firstSlot += interval;
 
   await ensureNotificationChannel();
 
-  for (let t = startMinutes; t <= endMinutes; t += interval) {
-    const hour = Math.floor(t / 60);
-    const minute = t % 60;
+  for (let slotMinutes = firstSlot; slotMinutes <= endMinutes; slotMinutes += interval) {
+    const slotElapsed = slotMinutes - startMinutes;
+    // Expected progress at this slot (linear target distribution across window)
+    const expectedAtSlot = targetMl * (slotElapsed / totalWindowMinutes);
+    // Projected actual consumption if user maintains current drinking rate
+    const projectedAtSlot = Math.min(targetMl, ratePerMinute * slotElapsed);
+    const projectedDeficit = Math.max(0, Math.round(expectedAtSlot - projectedAtSlot));
+
+    if (projectedDeficit <= 0) continue;
+
+    const slotDate = new Date(now);
+    slotDate.setHours(Math.floor(slotMinutes / 60), slotMinutes % 60, 0, 0);
+
     await Notifications.scheduleNotificationAsync({
       content: {
         title: "Hora de beber agua",
-        body: "Nao esqueca de se hidratar!",
+        body: `Voce esta ${formatWater(projectedDeficit)} abaixo do ritmo ideal de hidratacao.`,
         sound: true,
         data: { screen: "agua", tag: WATER_REMINDER_DATA_TAG },
       },
       trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DAILY,
-        hour,
-        minute,
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: slotDate,
       },
     });
   }
