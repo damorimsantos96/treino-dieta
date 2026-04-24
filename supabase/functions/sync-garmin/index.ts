@@ -1034,32 +1034,46 @@ async function fetchGarminLaps(session: GarminSession, activityIdValue: string) 
 
 async function fetchGarminActivityTemperature(session: GarminSession, activityIdValue: string): Promise<number | null> {
   const headers = garminApiHeaders(session, "bearer");
-  if (!headers) return null;
-
-  const endpoints = [
-    `${GARMIN_CONNECT_API_URL}/activity-service/activity/${activityIdValue}`,
-    `${GARMIN_CONNECT_API_URL}/activity-service/activity/${activityIdValue}/weather`,
-  ];
-
-  for (const url of endpoints) {
-    try {
-      const res = await fetch(url, { headers });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const temp =
-        data.summaryDTO?.temperature ??
-        data.summaryDTO?.temperatureC ??
-        data.summaryDTO?.avgTemperature ??
-        data.temperatureC ??
-        data.temperature ??
-        data.avgTemperature ??
-        null;
-      if (temp !== null && temp !== undefined) return Number(temp);
-    } catch {
-      continue;
-    }
+  if (!headers) {
+    console.warn(`[sync-garmin] temperature: sem bearer token para activity ${activityIdValue}`);
+    return null;
   }
 
+  // Primary: weather-service returns apparentTemp (sensação térmica) and temp (ambiente)
+  try {
+    const url = `${GARMIN_CONNECT_API_URL}/weather-service/weather/${activityIdValue}`;
+    const res = await fetch(url, { headers });
+    const text = await res.text();
+    console.log(`[sync-garmin] weather-service status=${res.status} body=${text.slice(0, 400)}`);
+    if (res.ok) {
+      const data = JSON.parse(text);
+      const temp = data.apparentTemp ?? data.temp ?? null;
+      if (temp !== null && temp !== undefined) return Number(temp);
+    }
+  } catch (e) {
+    console.warn(`[sync-garmin] weather-service error: ${e}`);
+  }
+
+  // Fallback: activity detail summaryDTO
+  try {
+    const url = `${GARMIN_CONNECT_API_URL}/activity-service/activity/${activityIdValue}`;
+    const res = await fetch(url, { headers });
+    const text = await res.text();
+    console.log(`[sync-garmin] activity-detail status=${res.status} summaryDTO=${JSON.stringify(JSON.parse(text).summaryDTO ?? {}).slice(0, 400)}`);
+    if (res.ok) {
+      const data = JSON.parse(text);
+      const temp =
+        data.summaryDTO?.AirTemperatureCelcius ??
+        data.summaryDTO?.airTemperatureCelcius ??
+        data.summaryDTO?.temperature ??
+        null;
+      if (temp !== null && temp !== undefined) return Number(temp);
+    }
+  } catch (e) {
+    console.warn(`[sync-garmin] activity-detail error: ${e}`);
+  }
+
+  console.warn(`[sync-garmin] temperature: nenhum dado encontrado para activity ${activityIdValue}`);
   return null;
 }
 
