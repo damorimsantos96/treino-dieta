@@ -148,6 +148,68 @@ export interface RunActivity {
   intervals?: RunSession[];
 }
 
+export interface AllOutTest {
+  id: string;
+  user_id: string;
+  date: string;
+  kind: string;
+  distance_km: number;
+  duration_min: number;
+  temp_c: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RunPredictionModelState {
+  id: string;
+  user_id: string;
+  data_signature: string | null;
+  ratio: number;
+  riegel_exp: number;
+  calibration_status: string;
+  n_tests: number;
+  max_test_date: string | null;
+  last_calibration_date: string | null;
+  hr_race: number;
+  hrmax_obs: number;
+  temp_slope: number;
+  temp_ref: number;
+  window_days: number;
+  ratio_default: number;
+  riegel_default: number;
+  trend_intercept: number | null;
+  trend_slope: number | null;
+  trend_sigma_residual: number | null;
+  trend_n_points: number;
+  trend_r_squared: number | null;
+  bootstrap_samples: unknown;
+  validation_mean_abs_error_pct: number | null;
+  validation_alert: boolean;
+  low_confidence_default: boolean;
+  methodology: unknown;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ValidationLogEntry {
+  id: string;
+  user_id: string;
+  test_id: string | null;
+  date: string;
+  kind: string | null;
+  distance_km: number;
+  duration_obs_min: number;
+  duration_pred_min: number | null;
+  temp_c: number | null;
+  indicator_source: string | null;
+  indicator_value: number | null;
+  ratio_used: number | null;
+  riegel_exp_used: number | null;
+  error_pct: number | null;
+  created_at: string;
+}
+
 export type PRUnit = "time_sec" | "reps" | "weight_kg" | "rounds_reps" | "meters";
 
 export interface PRMovement {

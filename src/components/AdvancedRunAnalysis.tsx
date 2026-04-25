@@ -5,6 +5,7 @@ import { ptBR } from "date-fns/locale";
 import { RunActivity } from "@/types";
 import { formatPace } from "@/utils/calculations";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
+import { FiveKPredictionPanel } from "@/components/FiveKPredictionPanel";
 import {
   ADVANCED_RUN_TYPE_COLORS,
   AdvancedRunAnalysis,
@@ -950,6 +951,8 @@ export function AdvancedRunAnalysisSection({
       >
         <MilestonesChart analysis={analysis} baseWidth={chartWidth} />
       </AdvancedPanel>
+
+      <FiveKPredictionPanel activities={activities} chartWidth={chartWidth} />
     </View>
   );
 }
