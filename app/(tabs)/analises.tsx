@@ -428,17 +428,6 @@ const RUN_FILTERS: { key: RunFilter; label: string }[] = [
   { key: "year", label: "Ano" },
 ];
 
-function runFilterFrom(filter: RunFilter): Date {
-  const now = new Date();
-  if (filter === "week") return subDays(now, 7);
-  if (filter === "month") return subMonths(now, 1);
-  return subYears(now, 1);
-}
-
-function runFilterTo(filter: RunFilter): Date {
-  return new Date();
-}
-
 function runBucketMode(filter: RunFilter): RunBucketMode {
   if (filter === "week") return "day";
   if (filter === "month") return "week";
@@ -708,8 +697,6 @@ export default function AnalisesScreen() {
   const [editingWeight, setEditingWeight] = useState<{ date: string; dateStr: string; weight: string; isNew?: boolean } | null>(null);
   const from = periodToDate(period);
   const now = useMemo(() => new Date(), []);
-  const runFrom = useMemo(() => runFilterFrom(runFilter), [runFilter]);
-  const runTo = useMemo(() => runFilterTo(runFilter), [runFilter]);
   const qc = useQueryClient();
 
   const { data: logs = [], isLoading: loadingLogs, refetch: refetchLogs } = useQuery({
@@ -717,17 +704,13 @@ export default function AnalisesScreen() {
     queryFn: () => getDailyLogs(from, now),
   });
 
-  const { data: periodRuns = [], isLoading: loadingPeriodRuns, refetch: refetchPeriodRuns } = useQuery({
-    queryKey: ["run_activities", period],
+  const { data: runs = [], isLoading: loadingRuns, refetch: refetchRuns } = useQuery({
+    queryKey: ["run_activities", "analises", period],
     queryFn: () => getRunActivities(from, now, 2000),
   });
-  const { data: runs = [], isLoading: loadingRuns, refetch: refetchRuns } = useQuery({
-    queryKey: ["run_activities", "analises", runFilter],
-    queryFn: () => getRunActivities(runFrom, runTo, 2000),
-  });
   const { data: runLogs = [], refetch: refetchRunLogs } = useQuery({
-    queryKey: ["daily_logs", "runs", runFilter],
-    queryFn: () => getDailyLogs(runFrom, runTo),
+    queryKey: ["daily_logs", "runs", period],
+    queryFn: () => getDailyLogs(from, now),
   });
   const {
     data: advancedRuns = [],
@@ -741,11 +724,10 @@ export default function AnalisesScreen() {
   useFocusEffect(
     useCallback(() => {
       refetchLogs();
-      refetchPeriodRuns();
       refetchRuns();
       refetchRunLogs();
       refetchAdvancedRuns();
-    }, [refetchLogs, refetchPeriodRuns, refetchRuns, refetchRunLogs, refetchAdvancedRuns])
+    }, [refetchLogs, refetchRuns, refetchRunLogs, refetchAdvancedRuns])
   );
 
   const { mutateAsync: saveWeight, isPending: savingWeight } = useMutation({
@@ -758,7 +740,7 @@ export default function AnalisesScreen() {
   const { mutateAsync: removeRun } = useMutation({ mutationFn: deleteRunActivity });
 
   const userMetrics = useUserMetrics();
-  const isLoading = loadingLogs || loadingPeriodRuns || loadingRuns;
+  const isLoading = loadingLogs || loadingRuns;
   const runLogsByDate = useMemo(
     () => Object.fromEntries(runLogs.map((log: DailyLog) => [log.date, log])),
     [runLogs]
@@ -808,7 +790,7 @@ export default function AnalisesScreen() {
   const totalKm = runs.reduce((sum, activity) => sum + activityDistance(activity), 0);
   const totalRunDuration = runs.reduce((sum, activity) => sum + activityDuration(activity), 0);
   const avgPace = totalKm > 0 && totalRunDuration > 0 ? totalRunDuration / totalKm : 0;
-  const totalRunDurationInPeriod = periodRuns.reduce((sum, activity) => sum + activityDuration(activity), 0);
+  const totalRunDurationInPeriod = runs.reduce((sum, activity) => sum + activityDuration(activity), 0);
   const avgRunHr = (() => {
     let weighted = 0;
     let duration = 0;
@@ -821,7 +803,7 @@ export default function AnalisesScreen() {
     return duration > 0 ? Math.round(weighted / duration) : null;
   })();
 
-  const runDateSet = new Set(periodRuns.map((activity) => activity.date));
+  const runDateSet = new Set(runs.map((activity) => activity.date));
   const trainingDays = new Set(
     logs
       .filter((log) => {
@@ -1077,7 +1059,7 @@ export default function AnalisesScreen() {
             </View>
             {runs.length > 0 ? (
               <>
-                <RunVolumePaceChart activities={runs} from={runFrom} to={runTo} period={runFilter} chartWidth={chartWidth} />
+                <RunVolumePaceChart activities={runs} from={from} to={now} period={runFilter} chartWidth={chartWidth} />
                 <StatRow label="Km total" value={`${totalKm.toFixed(1)} km`} valueColor="text-sky-400" />
                 <StatRow label="Corridas" value={`${runs.length}`} />
                 <StatRow label="Pace medio" value={avgPace ? `${formatPace(avgPace)}/km` : "-"} />
