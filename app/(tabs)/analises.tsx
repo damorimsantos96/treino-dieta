@@ -35,6 +35,7 @@ import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
 import { useFocusEffect } from "expo-router";
 import { AdvancedRunAnalysisSection } from "@/components/AdvancedRunAnalysis";
+import { PRSection } from "@/components/PRSection";
 
 const SCREEN_FALLBACK = 320;
 const CHART_LEFT = 36;
@@ -1091,6 +1092,11 @@ export default function AnalisesScreen() {
                 </View>
               ));
             })()}
+          </Card>
+
+          <Card className="gap-4">
+            <SectionLabel label="PRs" />
+            <PRSection embedded />
           </Card>
         </>
       )}
