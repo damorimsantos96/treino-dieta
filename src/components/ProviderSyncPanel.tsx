@@ -35,6 +35,7 @@ const ACTIVITY_OPTIONS: { key: ActivityKey; label: string }[] = [
   { key: "surf", label: "Surf" },
   { key: "ciclismo", label: "Ciclismo" },
   { key: "corrida", label: "Corrida" },
+  { key: "sauna" as ActivityKey, label: "Sauna" },
   { key: "outros", label: "Outros" },
 ];
 

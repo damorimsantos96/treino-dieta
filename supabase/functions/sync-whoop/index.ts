@@ -34,6 +34,7 @@ type MinField =
   | "min_surf"
   | "min_ciclismo"
   | "min_corrida"
+  | "min_sauna"
   | "min_outros";
 
 type BpmField =
@@ -43,6 +44,7 @@ type BpmField =
   | "bpm_surf"
   | "bpm_ciclismo"
   | "bpm_corrida"
+  | "bpm_sauna"
   | "bpm_outros";
 
 type ActivityKey =
@@ -52,10 +54,11 @@ type ActivityKey =
   | "surf"
   | "ciclismo"
   | "corrida"
+  | "sauna"
   | "outros";
 
 type SportMapping = {
-  kcalField: KcalField;
+  kcalField: KcalField | null;
   minField: MinField | null;
   bpmField: BpmField | null;
 };
@@ -199,7 +202,9 @@ Deno.serve(async (req) => {
     const workouts = await fetchWorkouts(accessToken);
 
     stage = "repair_legacy";
-    const repaired = await repairLegacyOtherImports(supabaseAdmin, user.id, workouts);
+    const repairedOther = await repairLegacyOtherImports(supabaseAdmin, user.id, workouts);
+    const repairedSauna = await repairLegacySaunaImports(supabaseAdmin, user.id, workouts);
+    const repaired = repairedOther + repairedSauna;
 
     stage = "candidates";
     const candidates = await toCandidates(supabaseAdmin, user.id, workouts);
@@ -383,7 +388,7 @@ async function importWorkouts(
     const normalized = normalizeWorkout(workout);
     const overrideKey = overrides[normalized.id];
     const resolvedNormalized = overrideKey
-      ? { ...normalized, mapping: keyToMapping(overrideKey) }
+      ? applyMappingMetricRules({ ...normalized, mapping: keyToMapping(overrideKey) })
       : normalized;
     const { id, date, mapping, kcal, minutes, avgHr } = resolvedNormalized;
 
@@ -398,7 +403,9 @@ async function importWorkouts(
     if (existingError) throw dbError("whoop_daily_log_select", existingError);
 
     const payload: Record<string, unknown> = { user_id: userId, date };
-    if (kcal != null) payload[mapping.kcalField] = Number(existing?.[mapping.kcalField] ?? 0) + kcal;
+    if (kcal != null && mapping.kcalField) {
+      payload[mapping.kcalField] = Number(existing?.[mapping.kcalField] ?? 0) + kcal;
+    }
     if (minutes != null && mapping.minField) {
       const currentMin = Number(existing?.[mapping.minField] ?? 0);
       payload[mapping.minField] =
@@ -453,7 +460,7 @@ function workoutName(workout: any): string {
 }
 
 function normalizeWorkout(workout: any): NormalizedWorkout {
-  return {
+  return applyMappingMetricRules({
     id: workoutId(workout),
     date: workoutDate(workout),
     name: workoutName(workout),
@@ -462,7 +469,7 @@ function normalizeWorkout(workout: any): NormalizedWorkout {
     kcal: workoutKcal(workout),
     minutes: workoutDurationMin(workout),
     avgHr: workoutAvgHr(workout),
-  };
+  });
 }
 
 function workoutDurationMin(workout: any): number | null {
@@ -494,9 +501,20 @@ function workoutSportId(workout: any): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizeSportName(name: unknown): string {
+  return String(name ?? "").trim().toLowerCase().replace(/[_-]+/g, " ");
+}
+
+function applyMappingMetricRules(normalized: NormalizedWorkout): NormalizedWorkout {
+  if (!normalized.mapping.kcalField) {
+    return { ...normalized, kcal: null };
+  }
+  return normalized;
+}
+
 function mapSport(workout: any): SportMapping {
   const sportId = workoutSportId(workout) ?? 0;
-  const name = String(workout.sport_name ?? workout.sportName ?? "").toLowerCase();
+  const name = normalizeSportName(workout.sport_name ?? workout.sportName ?? "");
 
   if (sportId === 48 || sportId === 96 || name.includes("cross") || name.includes("functional")) {
     return { kcalField: "kcal_crossfit", minField: "min_crossfit", bpmField: "bpm_crossfit" };
@@ -523,6 +541,9 @@ function mapSport(workout: any): SportMapping {
   if (sportId === 0 || name.includes("run") || name.includes("corr")) {
     return { kcalField: "kcal_corrida", minField: "min_corrida", bpmField: "bpm_corrida" };
   }
+  if (name.includes("steam room") || name.includes("steamroom") || name.includes("dry sauna") || name.includes("sauna")) {
+    return { kcalField: null, minField: "min_sauna", bpmField: "bpm_sauna" };
+  }
   return { kcalField: "kcal_outros", minField: "min_outros", bpmField: "bpm_outros" };
 }
 
@@ -537,6 +558,7 @@ const ACTIVITY_KEY_TO_MAPPING: Record<ActivityKey, SportMapping> = {
   surf:       { kcalField: "kcal_surf",        minField: "min_surf",       bpmField: "bpm_surf" },
   ciclismo:   { kcalField: "kcal_ciclismo",    minField: "min_ciclismo",   bpmField: "bpm_ciclismo" },
   corrida:    { kcalField: "kcal_corrida",     minField: "min_corrida",    bpmField: "bpm_corrida" },
+  sauna:      { kcalField: null,               minField: "min_sauna",      bpmField: "bpm_sauna" },
   outros:     { kcalField: "kcal_outros",      minField: "min_outros",     bpmField: "bpm_outros" },
 };
 
@@ -546,7 +568,11 @@ function keyToMapping(key: ActivityKey): SportMapping {
 
 function mappingToKey(mapping: SportMapping): ActivityKey {
   for (const [key, m] of Object.entries(ACTIVITY_KEY_TO_MAPPING) as [ActivityKey, SportMapping][]) {
-    if (m.kcalField === mapping.kcalField) return key;
+    if (
+      m.kcalField === mapping.kcalField &&
+      m.minField === mapping.minField &&
+      m.bpmField === mapping.bpmField
+    ) return key;
   }
   return "outros";
 }
@@ -587,7 +613,7 @@ async function reimportWorkouts(
     const storedMappingMeta = isRecord(meta.mapping) ? meta.mapping : null;
     const storedMapping: SportMapping = storedMappingMeta
       ? {
-          kcalField: String(storedMappingMeta.kcal_field) as KcalField,
+          kcalField: storedMappingMeta.kcal_field ? String(storedMappingMeta.kcal_field) as KcalField : null,
           minField: storedMappingMeta.min_field ? String(storedMappingMeta.min_field) as MinField : null,
           bpmField: storedMappingMeta.bpm_field ? String(storedMappingMeta.bpm_field) as BpmField : null,
         }
@@ -606,7 +632,7 @@ async function reimportWorkouts(
 
     const payload: Record<string, unknown> = { user_id: userId, date: normalized.date };
 
-    if (oldKcal != null) {
+    if (oldKcal != null && storedMapping.kcalField) {
       payload[storedMapping.kcalField] = Math.max(0, Number(existing?.[storedMapping.kcalField] ?? 0) - oldKcal);
     }
     if (oldMinutes != null && storedMapping.minField) {
@@ -620,7 +646,7 @@ async function reimportWorkouts(
     const newMinutes = normalized.minutes;
     const newAvgHr = normalized.avgHr;
 
-    if (newKcal != null) {
+    if (newKcal != null && storedMapping.kcalField) {
       payload[storedMapping.kcalField] = Number(payload[storedMapping.kcalField] ?? 0) + newKcal;
     }
     if (newMinutes != null && storedMapping.minField) {
@@ -640,7 +666,7 @@ async function reimportWorkouts(
       .upsert(payload, { onConflict: "user_id,date" });
     if (upsertError) throw dbError("whoop_reimport_daily_log_upsert", upsertError);
 
-    const reimportedNormalized = { ...normalized, mapping: storedMapping };
+    const reimportedNormalized = applyMappingMetricRules({ ...normalized, mapping: storedMapping });
     const { error: markerUpdateError } = await supabaseAdmin
       .from("activity_imports")
       .update({ metadata: buildImportMetadata(reimportedNormalized, meta) })
@@ -691,7 +717,7 @@ async function reclassifyWorkouts(
 
     const oldMapping: SportMapping = oldMappingMeta
       ? {
-          kcalField: String(oldMappingMeta.kcal_field) as KcalField,
+          kcalField: oldMappingMeta.kcal_field ? String(oldMappingMeta.kcal_field) as KcalField : null,
           minField: oldMappingMeta.min_field ? String(oldMappingMeta.min_field) as MinField : null,
           bpmField: oldMappingMeta.bpm_field ? String(oldMappingMeta.bpm_field) as BpmField : null,
         }
@@ -713,7 +739,7 @@ async function reclassifyWorkouts(
 
     const payload: Record<string, unknown> = { user_id: userId, date: normalized.date };
 
-    if (kcal != null) {
+    if (kcal != null && oldMapping.kcalField) {
       payload[oldMapping.kcalField] = Math.max(0, Number(existing?.[oldMapping.kcalField] ?? 0) - kcal);
     }
     if (minutes != null && oldMapping.minField) {
@@ -724,7 +750,7 @@ async function reclassifyWorkouts(
       }
     }
 
-    if (kcal != null) {
+    if (kcal != null && newMapping.kcalField) {
       payload[newMapping.kcalField] = Number(existing?.[newMapping.kcalField] ?? 0) + kcal;
     }
     if (minutes != null && newMapping.minField) {
@@ -744,7 +770,7 @@ async function reclassifyWorkouts(
       .upsert(payload, { onConflict: "user_id,date" });
     if (upsertError) throw dbError("whoop_reclassify_daily_log_upsert", upsertError);
 
-    const reclassifiedNormalized = { ...normalized, mapping: newMapping };
+    const reclassifiedNormalized = applyMappingMetricRules({ ...normalized, mapping: newMapping });
     const { error: markerUpdateError } = await supabaseAdmin
       .from("activity_imports")
       .update({ metadata: buildImportMetadata(reclassifiedNormalized, meta) })
@@ -766,7 +792,7 @@ function buildImportMetadata(normalized: NormalizedWorkout, current: unknown = {
     date: normalized.date,
     name: normalized.name,
     sport_id: normalized.sportId,
-    schema_version: 2,
+    schema_version: 3,
     mapping: {
       kcal_field: normalized.mapping.kcalField,
       min_field: normalized.mapping.minField,
@@ -805,7 +831,7 @@ async function repairLegacyOtherImports(supabaseAdmin: any, userId: string, work
     const schemaVersion = isRecord(marker.metadata) ? marker.metadata.schema_version : undefined;
     const needsOtherRepair =
       normalized.mapping.minField === "min_outros" || normalized.mapping.bpmField === "bpm_outros";
-    if (!needsOtherRepair || schemaVersion === 2) continue;
+    if (!needsOtherRepair || (typeof schemaVersion === "number" && schemaVersion >= 2)) continue;
 
     const { data: existing, error: existingError } = await supabaseAdmin
       .from("daily_logs")
@@ -845,6 +871,112 @@ async function repairLegacyOtherImports(supabaseAdmin: any, userId: string, work
       .eq("provider", "whoop")
       .eq("external_id", normalized.id);
     if (markerError) throw dbError("whoop_import_marker_update", markerError);
+
+    repaired++;
+  }
+
+  return repaired;
+}
+
+async function repairLegacySaunaImports(supabaseAdmin: any, userId: string, workouts: any[]) {
+  const ids = workouts.map(workoutId).filter(Boolean);
+  if (ids.length === 0) return 0;
+
+  const { data: importedRows, error } = await supabaseAdmin
+    .from("activity_imports")
+    .select("external_id, metadata")
+    .eq("user_id", userId)
+    .eq("provider", "whoop")
+    .in("external_id", ids);
+  if (error) throw dbError("whoop_imports_select", error);
+
+  const rowsById = new Map<string, { external_id: string; metadata?: unknown }>(
+    (importedRows ?? []).map((row: any) => [String(row.external_id), row])
+  );
+  let repaired = 0;
+
+  for (const workout of workouts) {
+    const normalized = normalizeWorkout(workout);
+    if (mappingToKey(normalized.mapping) !== "sauna") continue;
+
+    const marker = rowsById.get(normalized.id);
+    if (!marker) continue;
+
+    const meta = isRecord(marker.metadata) ? marker.metadata : {};
+    const schemaVersion = typeof meta.schema_version === "number" ? meta.schema_version : 0;
+    const storedMappingMeta = isRecord(meta.mapping) ? meta.mapping : null;
+    const storedMapping: SportMapping = storedMappingMeta
+      ? {
+          kcalField: storedMappingMeta.kcal_field ? String(storedMappingMeta.kcal_field) as KcalField : null,
+          minField: storedMappingMeta.min_field ? String(storedMappingMeta.min_field) as MinField : null,
+          bpmField: storedMappingMeta.bpm_field ? String(storedMappingMeta.bpm_field) as BpmField : null,
+        }
+      : normalized.mapping;
+    const sameMapping =
+      storedMapping.kcalField === normalized.mapping.kcalField &&
+      storedMapping.minField === normalized.mapping.minField &&
+      storedMapping.bpmField === normalized.mapping.bpmField;
+
+    if (schemaVersion >= 3 && sameMapping) continue;
+
+    const storedNorm = isRecord(meta.normalized) ? meta.normalized : null;
+    const oldKcal = storedNorm?.kcal != null ? Number(storedNorm.kcal) : null;
+    const oldMinutes = storedNorm?.minutes != null ? Number(storedNorm.minutes) : normalized.minutes;
+    const avgHr = storedNorm?.avg_hr != null ? Number(storedNorm.avg_hr) : normalized.avgHr;
+
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from("daily_logs")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("date", normalized.date)
+      .maybeSingle();
+    if (existingError) throw dbError("whoop_legacy_sauna_daily_log_select", existingError);
+
+    const payload: Record<string, unknown> = { user_id: userId, date: normalized.date };
+    let shouldUpsert = false;
+
+    if (!sameMapping) {
+      if (oldKcal != null && storedMapping.kcalField) {
+        payload[storedMapping.kcalField] = Math.max(0, Number(existing?.[storedMapping.kcalField] ?? 0) - oldKcal);
+        shouldUpsert = true;
+      }
+      if (oldMinutes != null && storedMapping.minField) {
+        const nextOldMinutes = Math.max(0, Number(existing?.[storedMapping.minField] ?? 0) - oldMinutes);
+        payload[storedMapping.minField] = nextOldMinutes;
+        if (nextOldMinutes === 0 && storedMapping.bpmField) {
+          payload[storedMapping.bpmField] = null;
+        }
+        shouldUpsert = true;
+      }
+      if (normalized.minutes != null && normalized.mapping.minField) {
+        payload[normalized.mapping.minField] = Number(existing?.[normalized.mapping.minField] ?? 0) + normalized.minutes;
+        shouldUpsert = true;
+      }
+      if (avgHr != null && normalized.mapping.bpmField && normalized.mapping.minField) {
+        payload[normalized.mapping.bpmField] = mergeBpm(
+          Number(existing?.[normalized.mapping.bpmField] ?? 0) || null,
+          Number(existing?.[normalized.mapping.minField] ?? 0) || null,
+          avgHr,
+          normalized.minutes
+        );
+        shouldUpsert = true;
+      }
+    }
+
+    if (shouldUpsert) {
+      const { error: upsertError } = await supabaseAdmin
+        .from("daily_logs")
+        .upsert(payload, { onConflict: "user_id,date" });
+      if (upsertError) throw dbError("whoop_legacy_sauna_daily_log_upsert", upsertError);
+    }
+
+    const { error: markerError } = await supabaseAdmin
+      .from("activity_imports")
+      .update({ metadata: buildImportMetadata(normalized, marker.metadata) })
+      .eq("user_id", userId)
+      .eq("provider", "whoop")
+      .eq("external_id", normalized.id);
+    if (markerError) throw dbError("whoop_legacy_sauna_marker_update", markerError);
 
     repaired++;
   }
