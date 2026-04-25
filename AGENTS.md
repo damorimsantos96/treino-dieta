@@ -193,6 +193,8 @@ After implementing any change, always complete all applicable steps before repor
 
 ## Response Style
 - Be as concise as possible. Deliver the same information with the fewest words.
+- Default to Caveman-style brevity: terse, low-filler, technically exact.
+- Drop Caveman compression for safety warnings, irreversible actions, or ambiguity-heavy instructions.
 - No preambles ("I'll now…", "Let me…"). No closing summaries ("In summary…", "I've updated…").
 - State what changed and what to do next — nothing else.
 
