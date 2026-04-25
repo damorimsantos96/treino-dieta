@@ -517,13 +517,19 @@ function workoutAvgHr(workout: any): number | null {
   return finiteNumberOrNull(
     workout.score?.average_heart_rate,
     workout.score?.avg_heart_rate,
+    workout.score?.averageHeartRate,
+    workout.score?.avgHeartRate,
     workout.score?.average_hr,
     workout.score?.avg_hr,
     workout.score?.heart_rate_average,
     workout.heart_rate?.average,
     workout.heart_rate?.avg,
+    workout.heartRate?.average,
+    workout.heartRate?.avg,
     workout.average_heart_rate,
     workout.avg_heart_rate,
+    workout.averageHeartRate,
+    workout.avgHeartRate,
     workout.average_hr,
     workout.avg_hr,
   );
@@ -951,13 +957,21 @@ async function repairLegacySaunaImports(supabaseAdmin: any, userId: string, work
       storedMapping.kcalField === normalized.mapping.kcalField &&
       storedMapping.minField === normalized.mapping.minField &&
       storedMapping.bpmField === normalized.mapping.bpmField;
-
-    if (schemaVersion >= 4 && sameMapping) continue;
-
     const storedNorm = isRecord(meta.normalized) ? meta.normalized : null;
     const oldKcal = storedNorm?.kcal != null ? Number(storedNorm.kcal) : null;
     const oldMinutes = storedNorm?.minutes != null ? Number(storedNorm.minutes) : normalized.minutes;
-    const avgHr = storedNorm?.avg_hr != null ? Number(storedNorm.avg_hr) : normalized.avgHr;
+    const storedAvgHr = storedNorm?.avg_hr != null ? Number(storedNorm.avg_hr) : null;
+    const avgHr = storedAvgHr ?? normalized.avgHr;
+    const needsAvgHrRepair =
+      oldMinutes != null &&
+      oldMinutes > 0 &&
+      sameMapping &&
+      storedAvgHr == null &&
+      avgHr != null &&
+      normalized.mapping.bpmField != null &&
+      normalized.mapping.minField != null;
+
+    if (schemaVersion >= 4 && sameMapping && !needsAvgHrRepair) continue;
 
     const { data: existing, error: existingError } = await supabaseAdmin
       .from("daily_logs")
@@ -996,6 +1010,18 @@ async function repairLegacySaunaImports(supabaseAdmin: any, userId: string, work
         );
         shouldUpsert = true;
       }
+    }
+
+    if (needsAvgHrRepair && normalized.mapping.bpmField && normalized.mapping.minField) {
+      const currentMinutes = Number(existing?.[normalized.mapping.minField] ?? 0);
+      const baseMinutes = Math.max(0, currentMinutes - oldMinutes);
+      payload[normalized.mapping.bpmField] = mergeBpm(
+        Number(existing?.[normalized.mapping.bpmField] ?? 0) || null,
+        baseMinutes || null,
+        avgHr,
+        oldMinutes
+      );
+      shouldUpsert = true;
     }
 
     if (shouldUpsert) {
