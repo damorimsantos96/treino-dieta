@@ -433,7 +433,6 @@ function monthBucketCount(period: Period, totalDays: number) {
   if (period === "1y") return 12;
   return Math.min(12, Math.max(1, Math.ceil(totalDays / 30)));
 }
-
 function runBucketMode(filter: RunFilter): RunBucketMode {
   return filter;
 }
@@ -717,9 +716,13 @@ export default function AnalisesScreen() {
     queryFn: () => getDailyLogs(from, now),
   });
 
-  const { data: periodRuns = [], isLoading: loadingPeriodRuns, refetch: refetchPeriodRuns } = useQuery({
-    queryKey: ["run_activities", period],
+  const { data: runs = [], isLoading: loadingRuns, refetch: refetchRuns } = useQuery({
+    queryKey: ["run_activities", "analises", period],
     queryFn: () => getRunActivities(from, now, 2000),
+  });
+  const { data: runLogs = [], refetch: refetchRunLogs } = useQuery({
+    queryKey: ["daily_logs", "runs", period],
+    queryFn: () => getDailyLogs(from, now),
   });
   const {
     data: advancedRuns = [],
@@ -733,9 +736,10 @@ export default function AnalisesScreen() {
   useFocusEffect(
     useCallback(() => {
       refetchLogs();
-      refetchPeriodRuns();
+      refetchRuns();
+      refetchRunLogs();
       refetchAdvancedRuns();
-    }, [refetchLogs, refetchPeriodRuns, refetchAdvancedRuns])
+    }, [refetchLogs, refetchRuns, refetchRunLogs, refetchAdvancedRuns])
   );
 
   const { mutateAsync: saveWeight, isPending: savingWeight } = useMutation({
@@ -748,10 +752,10 @@ export default function AnalisesScreen() {
   const { mutateAsync: removeRun } = useMutation({ mutationFn: deleteRunActivity });
 
   const userMetrics = useUserMetrics();
-  const isLoading = loadingLogs || loadingPeriodRuns;
+  const isLoading = loadingLogs || loadingRuns;
   const runLogsByDate = useMemo(
-    () => Object.fromEntries(logs.map((log: DailyLog) => [log.date, log])),
-    [logs]
+    () => Object.fromEntries(runLogs.map((log: DailyLog) => [log.date, log])),
+    [runLogs]
   );
 
   const weightRows = logs
@@ -795,11 +799,10 @@ export default function AnalisesScreen() {
     ? tdeeData.reduce((sum, item) => sum + item.value, 0) / tdeeData.length
     : 0;
 
-  const runs = periodRuns;
   const totalKm = runs.reduce((sum, activity) => sum + activityDistance(activity), 0);
   const totalRunDuration = runs.reduce((sum, activity) => sum + activityDuration(activity), 0);
   const avgPace = totalKm > 0 && totalRunDuration > 0 ? totalRunDuration / totalKm : 0;
-  const totalRunDurationInPeriod = periodRuns.reduce((sum, activity) => sum + activityDuration(activity), 0);
+  const totalRunDurationInPeriod = runs.reduce((sum, activity) => sum + activityDuration(activity), 0);
   const avgRunHr = (() => {
     let weighted = 0;
     let duration = 0;
@@ -812,7 +815,7 @@ export default function AnalisesScreen() {
     return duration > 0 ? Math.round(weighted / duration) : null;
   })();
 
-  const runDateSet = new Set(periodRuns.map((activity) => activity.date));
+  const runDateSet = new Set(runs.map((activity) => activity.date));
   const trainingDays = new Set(
     logs
       .filter((log) => {
