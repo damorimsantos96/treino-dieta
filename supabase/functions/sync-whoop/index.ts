@@ -472,12 +472,39 @@ function normalizeWorkout(workout: any): NormalizedWorkout {
   });
 }
 
+function finiteNumberOrNull(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (value == null || value === "") continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
 function workoutDurationMin(workout: any): number | null {
   const start = new Date(workout.start ?? workout.start_time ?? 0).getTime();
   const end = new Date(workout.end ?? workout.end_time ?? 0).getTime();
   if (Number.isFinite(start) && Number.isFinite(end) && end > start) return (end - start) / 60000;
-  const millis = workout.score?.duration_milli ?? workout.duration_milli ?? workout.duration_ms;
-  return millis ? millis / 60000 : null;
+  const millis = finiteNumberOrNull(
+    workout.score?.duration_milli,
+    workout.score?.duration_millis,
+    workout.score?.duration_ms,
+    workout.duration_milli,
+    workout.duration_millis,
+    workout.duration_ms,
+    workout.durationMilli,
+    workout.durationMillis,
+  );
+  if (millis != null) return millis / 60000;
+
+  const seconds = finiteNumberOrNull(
+    workout.score?.duration_seconds,
+    workout.score?.duration_secs,
+    workout.duration_seconds,
+    workout.duration_secs,
+    workout.duration_s,
+  );
+  return seconds != null ? seconds / 60 : null;
 }
 
 function workoutKcal(workout: any): number | null {
@@ -487,11 +514,19 @@ function workoutKcal(workout: any): number | null {
 }
 
 function workoutAvgHr(workout: any): number | null {
-  return workout.score?.average_heart_rate ??
-    workout.score?.avg_heart_rate ??
-    workout.average_heart_rate ??
-    workout.avg_hr ??
-    null;
+  return finiteNumberOrNull(
+    workout.score?.average_heart_rate,
+    workout.score?.avg_heart_rate,
+    workout.score?.average_hr,
+    workout.score?.avg_hr,
+    workout.score?.heart_rate_average,
+    workout.heart_rate?.average,
+    workout.heart_rate?.avg,
+    workout.average_heart_rate,
+    workout.avg_heart_rate,
+    workout.average_hr,
+    workout.avg_hr,
+  );
 }
 
 function workoutSportId(workout: any): number | null {
@@ -792,7 +827,7 @@ function buildImportMetadata(normalized: NormalizedWorkout, current: unknown = {
     date: normalized.date,
     name: normalized.name,
     sport_id: normalized.sportId,
-    schema_version: 3,
+    schema_version: 4,
     mapping: {
       kcal_field: normalized.mapping.kcalField,
       min_field: normalized.mapping.minField,
@@ -917,7 +952,7 @@ async function repairLegacySaunaImports(supabaseAdmin: any, userId: string, work
       storedMapping.minField === normalized.mapping.minField &&
       storedMapping.bpmField === normalized.mapping.bpmField;
 
-    if (schemaVersion >= 3 && sameMapping) continue;
+    if (schemaVersion >= 4 && sameMapping) continue;
 
     const storedNorm = isRecord(meta.normalized) ? meta.normalized : null;
     const oldKcal = storedNorm?.kcal != null ? Number(storedNorm.kcal) : null;
