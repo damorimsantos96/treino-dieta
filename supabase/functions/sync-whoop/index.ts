@@ -199,7 +199,10 @@ Deno.serve(async (req) => {
     const accessToken = await getWhoopAccessToken(supabaseAdmin, user.id);
 
     stage = "whoop_workouts";
-    const workouts = await fetchWorkouts(accessToken);
+    const listedWorkouts = await fetchWorkouts(accessToken);
+
+    stage = "whoop_workout_details";
+    const workouts = await hydrateWorkoutsWithMissingSaunaAvgHr(accessToken, listedWorkouts);
 
     stage = "repair_legacy";
     const repairedOther = await repairLegacyOtherImports(supabaseAdmin, user.id, workouts);
@@ -504,6 +507,14 @@ function finiteNumberOrNull(...values: unknown[]): number | null {
   return null;
 }
 
+function positiveFiniteNumberOrNull(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = finiteNumberOrNull(value);
+    if (parsed != null && parsed > 0) return parsed;
+  }
+  return null;
+}
+
 const AVG_HR_KEYS = new Set([
   "average_heart_rate",
   "avg_heart_rate",
@@ -532,6 +543,28 @@ function findNestedFiniteNumber(
 
   for (const nested of Object.values(value)) {
     const parsed = findNestedFiniteNumber(nested, candidateKeys, seen);
+    if (parsed != null) return parsed;
+  }
+
+  return null;
+}
+
+function findNestedPositiveFiniteNumber(
+  value: unknown,
+  candidateKeys: ReadonlySet<string>,
+  seen = new Set<unknown>()
+): number | null {
+  if (!isRecord(value) || seen.has(value)) return null;
+  seen.add(value);
+
+  for (const [key, nested] of Object.entries(value)) {
+    if (!candidateKeys.has(key)) continue;
+    const parsed = positiveFiniteNumberOrNull(nested);
+    if (parsed != null) return parsed;
+  }
+
+  for (const nested of Object.values(value)) {
+    const parsed = findNestedPositiveFiniteNumber(nested, candidateKeys, seen);
     if (parsed != null) return parsed;
   }
 
@@ -571,7 +604,7 @@ function workoutKcal(workout: any): number | null {
 }
 
 function workoutAvgHr(workout: any): number | null {
-  return finiteNumberOrNull(
+  return positiveFiniteNumberOrNull(
     workout.score?.average_heart_rate,
     workout.score?.avg_heart_rate,
     workout.score?.averageHeartRate,
@@ -605,7 +638,42 @@ function workoutAvgHr(workout: any): number | null {
     workout.avg_hr,
     workout.average_bpm,
     workout.avg_bpm,
-  ) ?? findNestedFiniteNumber(workout, AVG_HR_KEYS);
+  ) ?? findNestedPositiveFiniteNumber(workout, AVG_HR_KEYS);
+}
+
+async function fetchWorkoutById(token: string, id: string) {
+  return whoopGet(token, `/activity/workout/${id}`);
+}
+
+async function hydrateWorkoutsWithMissingSaunaAvgHr(accessToken: string, workouts: any[]) {
+  const missingSaunaIds = workouts
+    .filter((workout) => mappingToKey(mapSport(workout)) === "sauna" && workoutAvgHr(workout) == null)
+    .map((workout) => workoutId(workout))
+    .filter(Boolean);
+
+  if (missingSaunaIds.length === 0) return workouts;
+
+  const detailedById = new Map<string, any>();
+  await Promise.all(
+    missingSaunaIds.map(async (id) => {
+      try {
+        const detailed = await fetchWorkoutById(accessToken, id);
+        if (detailed) detailedById.set(id, detailed);
+      } catch (error) {
+        console.warn("whoop sauna detail fetch skipped", JSON.stringify({
+          id,
+          message: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    })
+  );
+
+  if (detailedById.size === 0) return workouts;
+
+  return workouts.map((workout) => {
+    const id = workoutId(workout);
+    return id && detailedById.has(id) ? { ...workout, ...detailedById.get(id) } : workout;
+  });
 }
 
 function workoutSportId(workout: any): number | null {
@@ -735,7 +803,7 @@ async function reimportWorkouts(
 
     const oldKcal = storedNorm.kcal != null ? Number(storedNorm.kcal) : null;
     const oldMinutes = storedNorm.minutes != null ? Number(storedNorm.minutes) : null;
-    const oldAvgHr = storedNorm.avg_hr != null ? Number(storedNorm.avg_hr) : null;
+    const oldAvgHr = positiveFiniteNumberOrNull(storedNorm.avg_hr);
 
     const { data: existing, error: existingError } = await supabaseAdmin
       .from("daily_logs")
@@ -861,7 +929,7 @@ async function reclassifyWorkouts(
 
     const kcal = storedNorm?.kcal != null ? Number(storedNorm.kcal) : normalized.kcal;
     const minutes = storedNorm?.minutes != null ? Number(storedNorm.minutes) : normalized.minutes;
-    const avgHr = storedNorm?.avg_hr != null ? Number(storedNorm.avg_hr) : normalized.avgHr;
+    const avgHr = positiveFiniteNumberOrNull(storedNorm?.avg_hr) ?? normalized.avgHr;
 
     if (oldMapping.kcalField === newMapping.kcalField) continue;
 
@@ -928,7 +996,7 @@ function buildImportMetadata(normalized: NormalizedWorkout, current: unknown = {
     date: normalized.date,
     name: normalized.name,
     sport_id: normalized.sportId,
-    schema_version: 4,
+    schema_version: 5,
     mapping: {
       kcal_field: normalized.mapping.kcalField,
       min_field: normalized.mapping.minField,
@@ -1055,7 +1123,7 @@ async function repairLegacySaunaImports(supabaseAdmin: any, userId: string, work
     const storedNorm = isRecord(meta.normalized) ? meta.normalized : null;
     const oldKcal = storedNorm?.kcal != null ? Number(storedNorm.kcal) : null;
     const oldMinutes = storedNorm?.minutes != null ? Number(storedNorm.minutes) : normalized.minutes;
-    const storedAvgHr = storedNorm?.avg_hr != null ? Number(storedNorm.avg_hr) : null;
+    const storedAvgHr = positiveFiniteNumberOrNull(storedNorm?.avg_hr);
     const avgHr = storedAvgHr ?? normalized.avgHr;
     const needsAvgHrRepair =
       oldMinutes != null &&
@@ -1066,7 +1134,7 @@ async function repairLegacySaunaImports(supabaseAdmin: any, userId: string, work
       normalized.mapping.bpmField != null &&
       normalized.mapping.minField != null;
 
-    if (schemaVersion >= 4 && sameMapping && !needsAvgHrRepair) continue;
+    if (schemaVersion >= 5 && sameMapping && !needsAvgHrRepair) continue;
 
     const { data: existing, error: existingError } = await supabaseAdmin
       .from("daily_logs")
