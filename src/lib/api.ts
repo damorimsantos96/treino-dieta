@@ -1,12 +1,15 @@
 import { supabase } from "./supabase";
 import {
+  AllOutTest,
   DailyLog,
-  RunActivity,
-  RunSession,
-  PRMovement,
   PRAttempt,
+  PRMovement,
+  RunActivity,
+  RunPredictionModelState,
+  RunSession,
   UserProfile,
   UserAppSettings,
+  ValidationLogEntry,
   WaterPreset,
   WaterIntake,
 } from "@/types";
@@ -319,6 +322,104 @@ export async function upsertRunSession(
 export async function deleteRunSession(id: string): Promise<void> {
   const { error } = await supabase.from("run_sessions").delete().eq("id", id);
   if (error) throw error;
+}
+
+export async function getAllOutTests(): Promise<AllOutTest[]> {
+  const { data, error } = await supabase
+    .from("all_out_tests")
+    .select("*")
+    .order("date", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createAllOutTest(
+  test: Pick<AllOutTest, "date" | "kind" | "distance_km" | "duration_min"> &
+    Partial<Pick<AllOutTest, "temp_c" | "notes">>
+): Promise<AllOutTest> {
+  const userId = await getUserId();
+  const { data, error } = await supabase
+    .from("all_out_tests")
+    .insert({
+      user_id: userId,
+      date: test.date,
+      kind: test.kind,
+      distance_km: test.distance_km,
+      duration_min: test.duration_min,
+      temp_c: test.temp_c ?? null,
+      notes: test.notes ?? null,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function getRunPredictionModelState(): Promise<RunPredictionModelState | null> {
+  const { data, error } = await supabase
+    .from("run_prediction_model_state")
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function upsertRunPredictionModelState(
+  state: Partial<RunPredictionModelState>
+): Promise<RunPredictionModelState> {
+  const userId = await getUserId();
+  const { data, error } = await supabase
+    .from("run_prediction_model_state")
+    .upsert({ ...state, user_id: userId }, { onConflict: "user_id" })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function replaceValidationLog(
+  entries: Array<
+    Omit<ValidationLogEntry, "id" | "user_id" | "created_at"> & {
+      test_id?: string | null;
+      kind?: string | null;
+      duration_pred_min?: number | null;
+      temp_c?: number | null;
+      indicator_source?: string | null;
+      indicator_value?: number | null;
+      ratio_used?: number | null;
+      riegel_exp_used?: number | null;
+      error_pct?: number | null;
+    }
+  >
+): Promise<void> {
+  const userId = await getUserId();
+  const { error: deleteError } = await supabase
+    .from("validation_log")
+    .delete()
+    .eq("user_id", userId);
+  if (deleteError) throw deleteError;
+
+  if (entries.length === 0) return;
+
+  const { error: insertError } = await supabase.from("validation_log").insert(
+    entries.map((entry) => ({
+      user_id: userId,
+      test_id: entry.test_id ?? null,
+      date: entry.date,
+      kind: entry.kind ?? null,
+      distance_km: entry.distance_km,
+      duration_obs_min: entry.duration_obs_min,
+      duration_pred_min: entry.duration_pred_min ?? null,
+      temp_c: entry.temp_c ?? null,
+      indicator_source: entry.indicator_source ?? null,
+      indicator_value: entry.indicator_value ?? null,
+      ratio_used: entry.ratio_used ?? null,
+      riegel_exp_used: entry.riegel_exp_used ?? null,
+      error_pct: entry.error_pct ?? null,
+    }))
+  );
+  if (insertError) throw insertError;
 }
 
 // ─── PR Movements ─────────────────────────────────────────────────────────────
