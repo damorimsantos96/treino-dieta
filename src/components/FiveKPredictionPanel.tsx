@@ -312,6 +312,30 @@ function ProjectionChart({
 
           {todayPoint ? dashedVertical(todayPoint.x, plotHeight, "rgba(255,255,255,0.5)") : null}
 
+          {[
+            { date: view.target20Min.optimisticDate, color: OPTIMISTIC, label: "O" },
+            { date: view.target20Min.realisticDate, color: REALISTIC, label: "R" },
+            { date: view.target20Min.conservativeDate, color: CONSERVATIVE, label: "C" },
+          ].map(({ date, color, label }) => {
+            if (!date) return null;
+            const days = Math.round(
+              (new Date(date).getTime() - new Date(view.trendCurve[0].date).getTime()) / (1000 * 60 * 60 * 24)
+            );
+            if (days < 0 || days > maxDays) return null;
+            const x = CHART_PADDING.left + scale(days, 0, maxDays || 1, 0, plotWidth);
+            return (
+              <View key={`target-${label}`}>
+                {dashedVertical(x, plotHeight, color)}
+                <Text
+                  className="absolute text-[10px] font-semibold"
+                  style={{ left: x + 3, top: CHART_PADDING.top + 2, color }}
+                >
+                  {label}
+                </Text>
+              </View>
+            );
+          })}
+
           {xTickDates.map((tick, index) => {
             const x = CHART_PADDING.left + scale(tick.day, 0, maxDays || 1, 0, plotWidth);
             const date = parseISO(tick.date);

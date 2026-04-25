@@ -1091,12 +1091,32 @@ export function buildFiveKPredictionView(
     .filter((value): value is number => value != null && Number.isFinite(value))
     .map((value) => Math.max(todayDays, value));
 
-  const optimisticDays = quantile(targetDaysSamples, 0.25);
-  const realisticDays = quantile(targetDaysSamples, 0.5);
-  const conservativeDays = quantile(targetDaysSamples, 0.75);
+  let optimisticDays = quantile(targetDaysSamples, 0.25);
+  let realisticDays = quantile(targetDaysSamples, 0.5);
+  let conservativeDays = quantile(targetDaysSamples, 0.75);
+
+  // Fallback: when bootstrap can't detect trend (e.g., < 8 weekly points → all slopes forced to 0),
+  // estimate dates using typical improvement rates so the panel never shows "—" for all three dates.
+  let usedRateFallback = false;
+  if (optimisticDays == null && indicatorValue != null && indicatorValue > 0) {
+    if (indicatorValue >= rbNeeded) {
+      optimisticDays = todayDays;
+      realisticDays = todayDays;
+      conservativeDays = todayDays;
+    } else {
+      const gap = rbNeeded - indicatorValue;
+      const perDay = indicatorValue / 30; // unit: speed22 per day at 1 %/month
+      optimisticDays   = todayDays + Math.ceil(gap / (perDay * 2.0)); // 2 %/month
+      realisticDays    = todayDays + Math.ceil(gap / (perDay * 1.0)); // 1 %/month
+      conservativeDays = todayDays + Math.ceil(gap / (perDay * 0.5)); // 0.5 %/month
+      usedRateFallback = true;
+    }
+  }
 
   const targetMessage =
-    targetDaysSamples.length === 0
+    usedRateFallback
+      ? "Estimativa baseada em taxa de progresso típica (dados de tendência ainda insuficientes para cálculo estatístico)."
+      : targetDaysSamples.length === 0
       ? "Evolução não detectável no período recente."
       : null;
 
