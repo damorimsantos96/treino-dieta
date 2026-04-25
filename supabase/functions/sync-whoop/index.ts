@@ -446,6 +446,29 @@ function mergeBpm(currentBpm: number | null, currentMin: number | null, newBpm: 
   return Math.round(((currentBpm * currentMin) + (newBpm * newMin)) / (currentMin + newMin));
 }
 
+function subtractBpmContribution(
+  totalBpm: number | null,
+  totalMin: number | null,
+  activityBpm: number | null,
+  activityMin: number | null
+) {
+  const remainingMinutes = Math.max(0, Number(totalMin ?? 0) - Number(activityMin ?? 0));
+  if (remainingMinutes === 0) {
+    return { remainingBpm: null, remainingMinutes: 0 };
+  }
+  if (!totalBpm || !totalMin || !activityBpm || !activityMin) {
+    return { remainingBpm: totalBpm ? Math.round(totalBpm) : null, remainingMinutes };
+  }
+
+  const remainingLoad = (totalBpm * totalMin) - (activityBpm * activityMin);
+  const remainingBpm = remainingLoad / remainingMinutes;
+  if (!Number.isFinite(remainingBpm) || remainingBpm <= 0) {
+    return { remainingBpm: Math.round(totalBpm), remainingMinutes };
+  }
+
+  return { remainingBpm: Math.round(remainingBpm), remainingMinutes };
+}
+
 function workoutId(workout: any): string {
   return String(workout.id ?? workout.workout_id ?? workout.activity_id ?? "");
 }
@@ -478,6 +501,40 @@ function finiteNumberOrNull(...values: unknown[]): number | null {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) return parsed;
   }
+  return null;
+}
+
+const AVG_HR_KEYS = new Set([
+  "average_heart_rate",
+  "avg_heart_rate",
+  "averageHeartRate",
+  "avgHeartRate",
+  "average_hr",
+  "avg_hr",
+  "heart_rate_average",
+  "average_bpm",
+  "avg_bpm",
+]);
+
+function findNestedFiniteNumber(
+  value: unknown,
+  candidateKeys: ReadonlySet<string>,
+  seen = new Set<unknown>()
+): number | null {
+  if (!isRecord(value) || seen.has(value)) return null;
+  seen.add(value);
+
+  for (const [key, nested] of Object.entries(value)) {
+    if (!candidateKeys.has(key)) continue;
+    const parsed = finiteNumberOrNull(nested);
+    if (parsed != null) return parsed;
+  }
+
+  for (const nested of Object.values(value)) {
+    const parsed = findNestedFiniteNumber(nested, candidateKeys, seen);
+    if (parsed != null) return parsed;
+  }
+
   return null;
 }
 
@@ -522,17 +579,33 @@ function workoutAvgHr(workout: any): number | null {
     workout.score?.average_hr,
     workout.score?.avg_hr,
     workout.score?.heart_rate_average,
+    workout.score?.average_bpm,
+    workout.score?.avg_bpm,
+    workout.score?.heart_rate?.average,
+    workout.score?.heart_rate?.avg,
+    workout.score?.heart_rate?.average_heart_rate,
+    workout.score?.heart_rate?.avg_heart_rate,
+    workout.score?.heartRate?.average,
+    workout.score?.heartRate?.avg,
+    workout.score?.heartRate?.averageHeartRate,
+    workout.score?.heartRate?.avgHeartRate,
     workout.heart_rate?.average,
     workout.heart_rate?.avg,
+    workout.heart_rate?.average_heart_rate,
+    workout.heart_rate?.avg_heart_rate,
     workout.heartRate?.average,
     workout.heartRate?.avg,
+    workout.heartRate?.averageHeartRate,
+    workout.heartRate?.avgHeartRate,
     workout.average_heart_rate,
     workout.avg_heart_rate,
     workout.averageHeartRate,
     workout.avgHeartRate,
     workout.average_hr,
     workout.avg_hr,
-  );
+    workout.average_bpm,
+    workout.avg_bpm,
+  ) ?? findNestedFiniteNumber(workout, AVG_HR_KEYS);
 }
 
 function workoutSportId(workout: any): number | null {
@@ -662,6 +735,7 @@ async function reimportWorkouts(
 
     const oldKcal = storedNorm.kcal != null ? Number(storedNorm.kcal) : null;
     const oldMinutes = storedNorm.minutes != null ? Number(storedNorm.minutes) : null;
+    const oldAvgHr = storedNorm.avg_hr != null ? Number(storedNorm.avg_hr) : null;
 
     const { data: existing, error: existingError } = await supabaseAdmin
       .from("daily_logs")
@@ -676,16 +750,29 @@ async function reimportWorkouts(
     if (oldKcal != null && storedMapping.kcalField) {
       payload[storedMapping.kcalField] = Math.max(0, Number(existing?.[storedMapping.kcalField] ?? 0) - oldKcal);
     }
+
+    const currentBpm = storedMapping.bpmField
+      ? Number(existing?.[storedMapping.bpmField] ?? 0) || null
+      : null;
+    const currentMinutes = storedMapping.minField
+      ? Number(existing?.[storedMapping.minField] ?? 0) || null
+      : null;
+    let remainingBpm = currentBpm;
+    let remainingMinutes = currentMinutes;
+
     if (oldMinutes != null && storedMapping.minField) {
-      payload[storedMapping.minField] = Math.max(0, Number(existing?.[storedMapping.minField] ?? 0) - oldMinutes);
-      if (Number(payload[storedMapping.minField]) === 0 && storedMapping.bpmField) {
+      const remaining = subtractBpmContribution(currentBpm, currentMinutes, oldAvgHr, oldMinutes);
+      remainingBpm = remaining.remainingBpm;
+      remainingMinutes = remaining.remainingMinutes || null;
+      payload[storedMapping.minField] = remaining.remainingMinutes;
+      if (remaining.remainingMinutes === 0 && storedMapping.bpmField) {
         payload[storedMapping.bpmField] = null;
       }
     }
 
-    const newKcal = normalized.kcal;
-    const newMinutes = normalized.minutes;
-    const newAvgHr = normalized.avgHr;
+    const newKcal = normalized.kcal ?? oldKcal;
+    const newMinutes = normalized.minutes ?? oldMinutes;
+    const newAvgHr = normalized.avgHr ?? oldAvgHr;
 
     if (newKcal != null && storedMapping.kcalField) {
       payload[storedMapping.kcalField] = Number(payload[storedMapping.kcalField] ?? 0) + newKcal;
@@ -695,11 +782,13 @@ async function reimportWorkouts(
     }
     if (newAvgHr != null && storedMapping.bpmField && storedMapping.minField) {
       payload[storedMapping.bpmField] = mergeBpm(
-        payload[storedMapping.bpmField] as number | null,
-        oldMinutes,
+        remainingBpm,
+        remainingMinutes,
         newAvgHr,
         newMinutes
       );
+    } else if (storedMapping.bpmField && remainingBpm != null) {
+      payload[storedMapping.bpmField] = remainingBpm;
     }
 
     const { error: upsertError } = await supabaseAdmin
@@ -707,7 +796,13 @@ async function reimportWorkouts(
       .upsert(payload, { onConflict: "user_id,date" });
     if (upsertError) throw dbError("whoop_reimport_daily_log_upsert", upsertError);
 
-    const reimportedNormalized = applyMappingMetricRules({ ...normalized, mapping: storedMapping });
+    const reimportedNormalized = applyMappingMetricRules({
+      ...normalized,
+      mapping: storedMapping,
+      kcal: newKcal,
+      minutes: newMinutes,
+      avgHr: newAvgHr,
+    });
     const { error: markerUpdateError } = await supabaseAdmin
       .from("activity_imports")
       .update({ metadata: buildImportMetadata(reimportedNormalized, meta) })
