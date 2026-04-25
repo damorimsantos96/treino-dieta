@@ -155,9 +155,11 @@ function TooltipContent({ test }: { test: FiveKPredictionTestHistoryItem }) {
 function TemperatureSlider({
   value,
   onChange,
+  compact,
 }: {
   value: number;
   onChange: (next: number) => void;
+  compact: boolean;
 }) {
   const [trackWidth, setTrackWidth] = useState(0);
 
@@ -172,13 +174,16 @@ function TemperatureSlider({
 
   return (
     <View className="gap-4">
-      <View className="flex-row items-end justify-between">
+      <View className={compact ? "gap-3" : "flex-row items-end justify-between gap-4"}>
         <View className="gap-1">
-          <Text className="text-[10px] tracking-[3px]" style={{ color: TEXT_MUTED }}>
+          <Text
+            className="text-[10px]"
+            style={{ color: TEXT_MUTED, letterSpacing: compact ? 2.2 : 3 }}
+          >
             TEMPERATURA / SENSAÇÃO TÉRMICA ESPERADA
           </Text>
         </View>
-        <Text style={{ color: GOLD, fontSize: 34, fontWeight: "700" }}>{value}°C</Text>
+        <Text style={{ color: GOLD, fontSize: compact ? 28 : 34, lineHeight: compact ? 32 : 38, fontWeight: "700" }}>{value}°C</Text>
       </View>
 
       <View
@@ -205,10 +210,14 @@ function TemperatureSlider({
         />
       </View>
 
-      <View className="flex-row items-center justify-between">
+      <View className="flex-row items-center justify-between gap-2">
         {[12, 18, 22, 28, 36].map((temp) => (
-          <TouchableOpacity key={temp} onPress={() => onChange(temp)}>
-            <Text className="text-[11px]" style={{ color: temp === 22 ? TEXT_SOFT : TEXT_MUTED }}>
+          <TouchableOpacity key={temp} onPress={() => onChange(temp)} className="flex-1">
+            <Text
+              className="text-center text-[11px]"
+              style={{ color: temp === 22 ? TEXT_SOFT : TEXT_MUTED }}
+              numberOfLines={2}
+            >
               {temp === 22 ? "22°C • ref" : `${temp}°C`}
             </Text>
           </TouchableOpacity>
@@ -508,6 +517,8 @@ export function FiveKPredictionPanel({
   const gapProgress =
     current != null ? clamp(TARGET_MIN / Math.max(TARGET_MIN, current.time5kMin), 0, 1) : 0;
   const wideLayout = chartWidth >= 900;
+  const compactLayout = chartWidth < 420;
+  const tightLayout = chartWidth < 360;
 
   return (
     <View
@@ -515,9 +526,11 @@ export function FiveKPredictionPanel({
       style={{ backgroundColor: PANEL_BG, borderColor: PANEL_BORDER }}
     >
       <View className="gap-4">
-        <View className="flex-row items-center justify-between">
-          <Text className="text-white text-[22px] font-bold">Previsão de teste de 5K</Text>
-          <Text className="text-[10px] font-semibold tracking-[3px]" style={{ color: GOLD }}>
+        <View className={compactLayout ? "gap-2" : "flex-row items-center justify-between gap-4"}>
+          <Text className="text-white text-[22px] font-bold" style={{ maxWidth: compactLayout ? "100%" : "72%" }}>
+            Previsão de teste de 5K
+          </Text>
+          <Text className="text-[10px] font-semibold" style={{ color: GOLD, letterSpacing: compactLayout ? 2.4 : 3 }}>
             PAINEL 87 • PROJEÇÃO CALIBRADA
           </Text>
         </View>
@@ -529,7 +542,7 @@ export function FiveKPredictionPanel({
         </Text>
       </View>
 
-      <TemperatureSlider value={temperatureC} onChange={setTemperatureC} />
+      <TemperatureSlider value={temperatureC} onChange={setTemperatureC} compact={compactLayout} />
 
       {current == null ? (
         <View className="rounded-[24px] border px-5 py-6" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
@@ -549,7 +562,14 @@ export function FiveKPredictionPanel({
                 SE VOCÊ CORRESSE HOJE
               </Text>
               <View className="gap-1">
-                <Text style={{ color: GOLD, fontSize: 58, lineHeight: 62, fontWeight: "700" }}>
+                <Text
+                  style={{
+                    color: GOLD,
+                    fontSize: tightLayout ? 46 : compactLayout ? 52 : 58,
+                    lineHeight: tightLayout ? 50 : compactLayout ? 56 : 62,
+                    fontWeight: "700",
+                  }}
+                >
                   {formatClock(current.time5kMin)}
                 </Text>
                 <Text className="text-sm" style={{ color: TEXT_MUTED }}>
@@ -563,8 +583,14 @@ export function FiveKPredictionPanel({
                   { label: "IC 90%", value: rangeLabel(current.ci90HalfWidth) },
                   { label: "HR CORRIDA", value: `${current.hrRace} bpm` },
                 ].map((item) => (
-                  <View key={item.label} className="w-1/3 pr-3">
-                    <Text className="text-[10px] tracking-[2px]" style={{ color: TEXT_MUTED }}>
+                  <View
+                    key={item.label}
+                    className={tightLayout ? "w-full" : compactLayout ? "w-1/2 pr-3" : "w-1/3 pr-3"}
+                  >
+                    <Text
+                      className="text-[10px]"
+                      style={{ color: TEXT_MUTED, letterSpacing: compactLayout ? 1.6 : 2 }}
+                    >
                       {item.label}
                     </Text>
                     <Text className="mt-2 text-[18px] font-bold text-white">{item.value}</Text>
@@ -598,7 +624,7 @@ export function FiveKPredictionPanel({
               <MetaDate label="CONSERVADOR" color={CONSERVATIVE} date={view.target20Min.conservativeDate} days={view.target20Min.conservativeDaysFromToday} />
 
               <View className="pt-1 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-                <Text className="text-[10px] tracking-[2px]" style={{ color: TEXT_MUTED }}>
+                <Text className="text-[10px]" style={{ color: TEXT_MUTED, letterSpacing: compactLayout ? 1.6 : 2 }}>
                   GAP ATUAL PARA A META
                 </Text>
                 <View className="mt-3 flex-row items-end gap-3">
@@ -665,7 +691,10 @@ export function FiveKPredictionPanel({
                   className="rounded-2xl border px-3 py-2.5"
                   style={{ borderColor: "rgba(255,255,255,0.08)", backgroundColor: "rgba(255,255,255,0.02)" }}
                 >
-                  <Text className="text-[10px] tracking-[2px]" style={{ color: TEXT_MUTED }}>
+                  <Text
+                    className="text-[10px]"
+                    style={{ color: TEXT_MUTED, letterSpacing: compactLayout ? 1.6 : 2 }}
+                  >
                     {item.label}
                   </Text>
                   <Text className="mt-1 text-sm font-bold text-white">{item.value}</Text>
