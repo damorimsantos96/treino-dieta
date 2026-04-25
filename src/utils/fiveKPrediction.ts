@@ -266,6 +266,21 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function sanitizeDistribution(values: number[]) {
+  if (values.length < 8) return values;
+
+  const q1 = quantile(values, 0.25);
+  const q3 = quantile(values, 0.75);
+  if (q1 == null || q3 == null) return values;
+
+  const iqr = Math.max(q3 - q1, 0.2);
+  const lowerFence = Math.max(0, q1 - iqr * 1.5);
+  const upperFence = q3 + iqr * 1.5;
+  const filtered = values.filter((value) => value >= lowerFence && value <= upperFence);
+
+  return filtered.length >= Math.max(6, Math.floor(values.length * 0.6)) ? filtered : values;
+}
+
 function round(value: number, digits: number) {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
@@ -884,15 +899,17 @@ function buildTimeDistribution(
   const fitAtDay = indicatorAtDays(fit, daysFromSeriesStart);
   const shift = rawIndicator != null ? rawIndicator - fitAtDay : 0;
 
-  return samples
-    .map((sample) =>
-      predictTimeFromIndicator(
-        Math.max(EPSILON, indicatorAtDays(sample, daysFromSeriesStart) + shift),
-        temperatureC,
-        ratio
+  return sanitizeDistribution(
+    samples
+      .map((sample) =>
+        predictTimeFromIndicator(
+          Math.max(EPSILON, indicatorAtDays(sample, daysFromSeriesStart) + shift),
+          temperatureC,
+          ratio
+        )
       )
-    )
-    .filter((value): value is number => value != null && Number.isFinite(value));
+      .filter((value): value is number => value != null && Number.isFinite(value))
+  );
 }
 
 function widenInterval(
@@ -1074,15 +1091,12 @@ export function buildFiveKPredictionView(
     .filter((value): value is number => value != null && Number.isFinite(value))
     .map((value) => Math.max(todayDays, value));
 
-  const optimisticDays =
-    trendSeries.fit.slope <= EPSILON ? null : quantile(targetDaysSamples, 0.25);
-  const realisticDays =
-    trendSeries.fit.slope <= EPSILON ? null : quantile(targetDaysSamples, 0.5);
-  const conservativeDays =
-    trendSeries.fit.slope <= EPSILON ? null : quantile(targetDaysSamples, 0.75);
+  const optimisticDays = quantile(targetDaysSamples, 0.25);
+  const realisticDays = quantile(targetDaysSamples, 0.5);
+  const conservativeDays = quantile(targetDaysSamples, 0.75);
 
   const targetMessage =
-    trendSeries.fit.slope <= EPSILON
+    targetDaysSamples.length === 0
       ? "Evolução não detectável no período recente."
       : null;
 
