@@ -88,6 +88,7 @@ export default function TabsLayout() {
         name="prs"
         options={{
           title: "PRs",
+          href: null,
           tabBarIcon: ({ focused }) => <TabIcon name="trophy" focused={focused} />,
         }}
       />
