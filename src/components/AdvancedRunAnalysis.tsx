@@ -952,7 +952,8 @@ export function AdvancedRunAnalysisSection({
         <MilestonesChart analysis={analysis} baseWidth={chartWidth} />
       </AdvancedPanel>
 
-      <FiveKPredictionPanel activities={activities} chartWidth={chartWidth} />
+      {/* FiveKPredictionPanel hidden — re-enable when requested */}
+      {false && <FiveKPredictionPanel activities={activities} chartWidth={chartWidth} />}
     </View>
   );
 }
