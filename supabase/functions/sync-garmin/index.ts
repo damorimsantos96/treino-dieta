@@ -8,6 +8,10 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  classifyRunActivityIntervals,
+  detectAutoAllOutTest,
+} from "../../../src/utils/runPredictionHeuristics.ts";
 
 // ── Garmin API endpoints ─────────────────────────────────────────────────────
 const GARMIN_CONNECT_API_URL = "https://connectapi.garmin.com";
@@ -532,6 +536,17 @@ async function importActivity(supabaseAdmin: any, userId: string, session: Garmi
   }));
   const { error: intervalError } = await supabaseAdmin.from("run_sessions").insert(rows);
   if (intervalError) throw dbError("garmin_intervals_insert", intervalError);
+  await syncAutoDetectedAllOutTest(supabaseAdmin, userId, {
+    ...savedActivity,
+    source: "garmin",
+    name: activity.activityName ?? "Corrida Garmin",
+    distance_km: totalKm || activityDistanceKm,
+    duration_min: totalMin || durationSeconds(activity.duration ?? activity.elapsedDuration) / 60,
+    avg_pace_min_km: totalKm > 0 && totalMin > 0 ? totalMin / totalKm : null,
+    avg_hr: avgHr ?? activity.averageHR ?? null,
+    max_hr: maxHr,
+    thermal_sensation_c: temperatureC,
+  }, rows);
 
   const { error: markerError } = await supabaseAdmin
     .from("activity_imports")
@@ -587,7 +602,28 @@ function normalizeLaps(laps: any[], date: string, activityIdValue: string, activ
     filtered.pop();
   }
 
-  return filtered;
+  const totalKm = filtered.reduce((sum, lap) => sum + (lap.distance_km ?? 0), 0);
+  const totalMin = filtered.reduce((sum, lap) => sum + (lap.duration_min ?? 0), 0);
+  const avgHr = weightedHr(filtered);
+  const maxHr = Math.max(...filtered.map((lap) => lap.max_hr ?? 0), 0) || null;
+  const classified = classifyRunActivityIntervals(
+    {
+      id: activityIdValue,
+      date,
+      distance_km: totalKm || activityDistanceKm,
+      duration_min: totalMin || null,
+      avg_pace_min_km: totalKm > 0 && totalMin > 0 ? totalMin / totalKm : null,
+      avg_hr: avgHr,
+      max_hr: maxHr,
+      thermal_sensation_c: thermalSensationC,
+    },
+    filtered
+  );
+
+  return filtered.map((lap, index) => ({
+    ...lap,
+    interval_type: classified[index]?.intervalType ?? lap.interval_type,
+  }));
 }
 
 function shouldSkipTrailingSummaryLap(intervals: any[], activityDistanceKm: number): boolean {
@@ -626,6 +662,44 @@ function classifyLap(lap: any): string {
   if (avgHr > 170) return "Intervals";
   if (avgHr > 155) return "Threshold";
   return "Easy";
+}
+
+async function syncAutoDetectedAllOutTest(
+  supabaseAdmin: any,
+  userId: string,
+  activity: any,
+  intervals: any[]
+) {
+  const detected = detectAutoAllOutTest(activity, intervals);
+  if (!detected || !activity.id) {
+    const { error: deleteError } = await supabaseAdmin
+      .from("all_out_tests")
+      .delete()
+      .eq("user_id", userId)
+      .eq("is_auto_generated", true)
+      .eq("source_run_activity_id", activity.id);
+    if (deleteError) throw dbError("garmin_auto_all_out_delete", deleteError);
+    return;
+  }
+
+  const { error: upsertError } = await supabaseAdmin
+    .from("all_out_tests")
+    .upsert(
+      {
+        user_id: userId,
+        date: detected.date,
+        kind: detected.kind,
+        distance_km: detected.distance_km,
+        duration_min: detected.duration_min,
+        temp_c: detected.temp_c,
+        source_run_activity_id: activity.id,
+        is_auto_generated: true,
+        auto_confidence: detected.confidence,
+        notes: detected.notes,
+      },
+      { onConflict: "user_id,source_run_activity_id" }
+    );
+  if (upsertError) throw dbError("garmin_auto_all_out_upsert", upsertError);
 }
 
 function fahrenheitToCelsius(f: number): number {

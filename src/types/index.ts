@@ -156,6 +156,9 @@ export interface AllOutTest {
   distance_km: number;
   duration_min: number;
   temp_c: number | null;
+  source_run_activity_id: string | null;
+  is_auto_generated: boolean;
+  auto_confidence: number | null;
   notes: string | null;
   created_at: string;
   updated_at: string;

@@ -6,6 +6,12 @@ import {
   startOfWeek,
 } from "date-fns";
 import { AllOutTest, RunActivity } from "@/types";
+import {
+  classifyRunActivityIntervals,
+  detectAutoAllOutTest,
+  mapIntervalTypeToBlockKind,
+  normalizeRunLabel,
+} from "@/utils/runPredictionHeuristics";
 
 const HR_RACE = 171;
 const HRMAX_OBS = 184;
@@ -32,6 +38,8 @@ interface FlattenedInterval {
   avgHr: number | null;
   maxHr: number | null;
   tempC: number | null;
+  validatedType: string;
+  classificationConfidence: number;
   blockKind: BlockKind;
   speed22: number | null;
 }
@@ -64,8 +72,19 @@ interface CalibrationSummary {
   ratio: number;
   riegelExp: number;
   nTestsUsed: number;
+  autoTestsUsed: number;
+  manualTestsUsed: number;
   lastCalibrationDate: string | null;
   calibrationStatus: string;
+  calibrationMode: "default" | "partial" | "calibrated";
+}
+
+interface RepWindowDiagnostics {
+  totalCandidate1k: number;
+  eligible1k: number;
+  rejectedByType: number;
+  rejectedByTemp: number;
+  autoDetectedTests: number;
 }
 
 export interface FiveKValidationEntryInput {
@@ -113,8 +132,11 @@ export interface FiveKPredictionView {
     ratio: number;
     riegelExp: number;
     nTestsUsed: number;
+    autoTestsUsed: number;
+    manualTestsUsed: number;
     lastCalibrationDate: string | null;
     calibrationStatus: string;
+    calibrationMode: "default" | "partial" | "calibrated";
   };
   current: {
     indicatorValue: number;
@@ -153,9 +175,24 @@ export interface FiveKPredictionView {
     validationAlert: boolean;
     validationCount: number;
     fallbackActive: boolean;
+    repWindowDiagnostics: RepWindowDiagnostics;
   };
   persistence: {
     dataSignature: string;
+    autoDetectedTests: Array<
+      Pick<
+        AllOutTest,
+        | "date"
+        | "kind"
+        | "distance_km"
+        | "duration_min"
+        | "temp_c"
+        | "notes"
+        | "source_run_activity_id"
+        | "is_auto_generated"
+        | "auto_confidence"
+      >
+    >;
     modelState: {
       data_signature: string;
       ratio: number;
@@ -239,11 +276,7 @@ function iso(value: Date) {
 }
 
 function normalizeLabel(value: string | null | undefined) {
-  return (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
+  return normalizeRunLabel(value);
 }
 
 function hashString(input: string) {
@@ -345,32 +378,28 @@ function flattenIntervals(activities: RunActivity[]): FlattenedInterval[] {
           maxHr: toFiniteNumber(interval.max_hr),
           tempC: toFiniteNumber(interval.thermal_sensation_c),
           explicitType: normalizeLabel(interval.interval_type),
+          durationMin: toFiniteNumber(interval.duration_min),
         };
       })
       .sort((a, b) => a.intervalIndex - b.intervalIndex);
 
-    const paceValues = prepared
-      .map((interval) => interval.paceMinKm)
-      .filter((value): value is number => value != null && value > 0);
-    const medianPace = median(paceValues);
-    const mad =
-      medianPace == null
-        ? null
-        : median(paceValues.map((pace) => Math.abs(pace - medianPace)));
+    const classifications = classifyRunActivityIntervals(
+      activity,
+      prepared.map((interval) => ({
+        interval_index: interval.intervalIndex,
+        interval_type: interval.explicitType,
+        distance_km: interval.distanceKm,
+        duration_min: interval.durationMin,
+        pace_min_km: interval.paceMinKm,
+        avg_hr: interval.avgHr,
+        max_hr: interval.maxHr,
+      }))
+    );
 
-    for (const interval of prepared) {
-      let blockKind: BlockKind = "work";
-      if (interval.explicitType === "recovery") {
-        blockKind = "recovery";
-      } else if (interval.explicitType === "work") {
-        blockKind = "work";
-      } else if (interval.paceMinKm != null && medianPace != null && mad != null && mad > EPSILON) {
-        const zScore = (interval.paceMinKm - medianPace) / (1.4826 * mad);
-        blockKind = zScore > 1.5 ? "recovery" : "work";
-        if (interval.distanceKm < 0.15 && interval.paceMinKm > medianPace * 1.3) {
-          blockKind = "recovery";
-        }
-      }
+    for (const [index, interval] of prepared.entries()) {
+      const classification = classifications[index];
+      const explicitBlockKind = mapIntervalTypeToBlockKind(interval.explicitType);
+      const blockKind = explicitBlockKind ?? classification.blockKind;
 
       const hrNormT =
         interval.tempC == null
@@ -395,6 +424,8 @@ function flattenIntervals(activities: RunActivity[]): FlattenedInterval[] {
         avgHr: interval.avgHr,
         maxHr: interval.maxHr,
         tempC: interval.tempC,
+        validatedType: classification.intervalType,
+        classificationConfidence: classification.confidence,
         blockKind,
         speed22,
       });
@@ -408,17 +439,98 @@ function flattenIntervals(activities: RunActivity[]): FlattenedInterval[] {
   );
 }
 
+function buildAutoDetectedTests(activities: RunActivity[], persistedTests: AllOutTest[]) {
+  const manualTests = persistedTests.filter((test) => !test.is_auto_generated);
+
+  return activities
+    .map((activity): AllOutTest | null => {
+      const intervals =
+        activity.intervals && activity.intervals.length > 0
+          ? activity.intervals
+          : syntheticIntervals(activity);
+      const candidate = detectAutoAllOutTest(activity, intervals);
+      if (!candidate) return null;
+
+      const hasManualEquivalent = manualTests.some((test) => {
+        const sameDate = test.date === candidate.date;
+        const closeDistance = Math.abs(test.distance_km - candidate.distance_km) <= 0.12;
+        const closeDuration = Math.abs(test.duration_min - candidate.duration_min) <= 2;
+        return sameDate && closeDistance && closeDuration;
+      });
+
+      if (hasManualEquivalent) return null;
+
+      return {
+        id: `auto:${candidate.source_run_activity_id ?? activity.id ?? candidate.date}`,
+        user_id: persistedTests[0]?.user_id ?? "",
+        date: candidate.date,
+        kind: candidate.kind,
+        distance_km: candidate.distance_km,
+        duration_min: candidate.duration_min,
+        temp_c: candidate.temp_c,
+        source_run_activity_id: candidate.source_run_activity_id,
+        is_auto_generated: true,
+        auto_confidence: candidate.confidence,
+        notes: candidate.notes,
+        created_at: "",
+        updated_at: "",
+      };
+    })
+    .filter((value): value is AllOutTest => value !== null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function isRepCandidate(interval: FlattenedInterval) {
+  const distanceOk = interval.distanceKm >= 0.85 && interval.distanceKm <= 1.2;
+  const paceOk =
+    interval.paceMinKm != null &&
+    interval.paceMinKm > 2.4 &&
+    interval.paceMinKm < 5.6;
+  const intensityOk =
+    (interval.avgHr != null && interval.avgHr >= 155) ||
+    (interval.maxHr != null && interval.maxHr >= 170) ||
+    interval.validatedType === "Intervals" ||
+    interval.validatedType === "Race" ||
+    (interval.avgHr == null && interval.maxHr == null);
+
+  return (
+    interval.blockKind === "work" &&
+    interval.classificationConfidence >= 0.62 &&
+    distanceOk &&
+    paceOk &&
+    intensityOk &&
+    interval.speed22 != null
+  );
+}
+
+function summarizeRepWindow(targetDate: string, intervals: FlattenedInterval[], autoDetectedTests: AllOutTest[]) {
+  const start = iso(addDays(parseISO(targetDate), -WINDOW_DAYS));
+  const currentWindow = intervals.filter(
+    (interval) =>
+      interval.date >= start &&
+      interval.date < targetDate &&
+      interval.distanceKm >= 0.85 &&
+      interval.distanceKm <= 1.2
+  );
+
+  return {
+    totalCandidate1k: currentWindow.length,
+    eligible1k: currentWindow.filter((interval) => isRepCandidate(interval)).length,
+    rejectedByType: currentWindow.filter(
+      (interval) => interval.speed22 != null && !isRepCandidate(interval)
+    ).length,
+    rejectedByTemp: currentWindow.filter((interval) => interval.speed22 == null).length,
+    autoDetectedTests: autoDetectedTests.length,
+  };
+}
+
 function repBest22(targetDate: string, intervals: FlattenedInterval[], windowDays = WINDOW_DAYS) {
   const start = iso(addDays(parseISO(targetDate), -windowDays));
   const candidates = intervals.filter(
     (interval) =>
       interval.date >= start &&
       interval.date < targetDate &&
-      interval.blockKind === "work" &&
-      interval.distanceKm >= 0.85 &&
-      interval.distanceKm <= 1.2 &&
-      (interval.paceMinKm ?? Number.POSITIVE_INFINITY) < 5.6 &&
-      interval.speed22 != null
+      isRepCandidate(interval)
   );
   if (candidates.length === 0) return null;
   return Math.max(...candidates.map((interval) => interval.speed22 as number));
@@ -578,13 +690,46 @@ function calibrateModel(tests: ResolvedAllOutTest[], intervals: FlattenedInterva
         item.indicator != null
     );
 
-  if (calibratable.length < 2) {
+  const autoTestsUsed = calibratable.filter((item) => item.test.is_auto_generated).length;
+  const manualTestsUsed = calibratable.length - autoTestsUsed;
+
+  if (calibratable.length === 0) {
     return {
       ratio: RATIO_DEFAULT,
       riegelExp: RIEGEL_DEFAULT,
-      nTestsUsed: calibratable.length,
+      nTestsUsed: 0,
+      autoTestsUsed: 0,
+      manualTestsUsed: 0,
       lastCalibrationDate: calibratable.at(-1)?.test.date ?? tests.at(-1)?.date ?? null,
       calibrationStatus: "default",
+      calibrationMode: "default",
+    };
+  }
+
+  if (calibratable.length === 1) {
+    const [{ test, indicator }] = calibratable;
+    const equivalent5kMin = equivalent5kAt22(test, RIEGEL_DEFAULT);
+    const observedRatio =
+      equivalent5kMin != null && equivalent5kMin > 0 && indicator > 0
+        ? (300 / equivalent5kMin) / indicator
+        : null;
+    const distanceWeight = clamp(1 - Math.min(Math.abs(test.distance_km - 5), 5) / 5, 0, 1);
+    const confidenceWeight = test.is_auto_generated ? test.auto_confidence ?? 0.7 : 1;
+    const blendWeight = clamp(0.35 + distanceWeight * 0.2 + confidenceWeight * 0.15, 0.35, 0.7);
+    const ratio =
+      observedRatio != null && Number.isFinite(observedRatio) && observedRatio > 0
+        ? round(RATIO_DEFAULT * (1 - blendWeight) + observedRatio * blendWeight, 4)
+        : RATIO_DEFAULT;
+
+    return {
+      ratio,
+      riegelExp: RIEGEL_DEFAULT,
+      nTestsUsed: 1,
+      autoTestsUsed,
+      manualTestsUsed,
+      lastCalibrationDate: test.date,
+      calibrationStatus: "parcial com 1 teste",
+      calibrationMode: "partial",
     };
   }
 
@@ -618,8 +763,11 @@ function calibrateModel(tests: ResolvedAllOutTest[], intervals: FlattenedInterva
     ratio: round(mean(finalRatios) ?? RATIO_DEFAULT, 4),
     riegelExp: exponent,
     nTestsUsed: calibratable.length,
+    autoTestsUsed,
+    manualTestsUsed,
     lastCalibrationDate: calibratable.at(-1)?.test.date ?? null,
     calibrationStatus: `calibrado em ${calibratable.length} testes`,
+    calibrationMode: "calibrated",
   };
 }
 
@@ -871,9 +1019,14 @@ export function buildFiveKPredictionView(
   temperatureC: number,
   today = iso(new Date())
 ): FiveKPredictionView {
-  const dataSignature = makeDataSignature(activities, tests);
+  const autoDetectedTests = buildAutoDetectedTests(activities, tests);
+  const effectiveTests = [
+    ...tests.filter((test) => !test.is_auto_generated),
+    ...autoDetectedTests,
+  ].sort((a, b) => a.date.localeCompare(b.date) || a.duration_min - b.duration_min);
+  const dataSignature = makeDataSignature(activities, effectiveTests);
   const intervals = flattenIntervals(activities);
-  const resolvedTests = resolveTestTemperatures(tests, intervals);
+  const resolvedTests = resolveTestTemperatures(effectiveTests, intervals);
   const calibration = calibrateModel(resolvedTests, intervals);
   const validation = buildValidationLog(resolvedTests, intervals, calibration);
   const trendSeries = buildTrendSeries(intervals, today);
@@ -907,6 +1060,7 @@ export function buildFiveKPredictionView(
     currentLower = widened.lower;
     currentUpper = widened.upper;
   }
+  const repWindowDiagnostics = summarizeRepWindow(today, intervals, autoDetectedTests);
 
   const isTemperatureExtrapolated = temperatureC < 14 || temperatureC > 34;
   const targetSpeed22 = 15 * HR_RACE / (HR_RACE - TEMP_SLOPE * (temperatureC - TEMP_REF));
@@ -990,6 +1144,9 @@ export function buildFiveKPredictionView(
     };
   });
 
+  const summaryText =
+    "Projecao do seu 5K atual e da meta sub-20 usando blocos fortes validados, correcao termica e calibracao com testes all-out auto-detectados.";
+
   const current =
     currentTime == null || indicatorValue == null || indicatorSource == null
       ? null
@@ -1015,14 +1172,17 @@ export function buildFiveKPredictionView(
     today,
     temperatureC,
     isTemperatureExtrapolated,
-    summaryText:
+    summaryText: summaryText ||
       "Projeção calibrada do seu 5K atual e da meta sub-20 usando reps recentes, correção térmica e autoajuste com testes all-out.",
     calibration: {
       ratio: calibration.ratio,
       riegelExp: calibration.riegelExp,
       nTestsUsed: calibration.nTestsUsed,
+      autoTestsUsed: calibration.autoTestsUsed,
+      manualTestsUsed: calibration.manualTestsUsed,
       lastCalibrationDate: calibration.lastCalibrationDate,
       calibrationStatus: calibration.calibrationStatus,
+      calibrationMode: calibration.calibrationMode,
     },
     current,
     target20Min: {
@@ -1061,9 +1221,21 @@ export function buildFiveKPredictionView(
       validationAlert: (validation.meanAbsErrorPct ?? 0) > 2,
       validationCount: validation.validationCount,
       fallbackActive: indicatorSource === "sustain_top3",
+      repWindowDiagnostics,
     },
     persistence: {
       dataSignature,
+      autoDetectedTests: autoDetectedTests.map((test) => ({
+        date: test.date,
+        kind: test.kind,
+        distance_km: test.distance_km,
+        duration_min: test.duration_min,
+        temp_c: test.temp_c,
+        notes: test.notes,
+        source_run_activity_id: test.source_run_activity_id,
+        is_auto_generated: true,
+        auto_confidence: test.auto_confidence ?? null,
+      })),
       modelState: {
         data_signature: dataSignature,
         ratio: calibration.ratio,
@@ -1092,6 +1264,9 @@ export function buildFiveKPredictionView(
         methodology: {
           summary_text: "Reps recentes + correção térmica + Riegel calibrado com testes all-out.",
           target_label: TARGET_MINUTES,
+          calibration_mode: calibration.calibrationMode,
+          auto_detected_tests: autoDetectedTests.length,
+          rep_window: repWindowDiagnostics,
           target_realistic_month: formatMonthYear(
             realisticDays != null
               ? iso(addDays(parseISO(trendSeries.startDate), Math.round(realisticDays)))

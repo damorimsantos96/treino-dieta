@@ -348,12 +348,71 @@ export async function createAllOutTest(
       distance_km: test.distance_km,
       duration_min: test.duration_min,
       temp_c: test.temp_c ?? null,
+      source_run_activity_id: null,
+      is_auto_generated: false,
+      auto_confidence: null,
       notes: test.notes ?? null,
     })
     .select()
     .single();
   if (error) throw error;
   return data;
+}
+
+export async function syncAutoDetectedAllOutTests(
+  tests: Array<
+    Pick<
+      AllOutTest,
+      | "date"
+      | "kind"
+      | "distance_km"
+      | "duration_min"
+      | "temp_c"
+      | "notes"
+      | "source_run_activity_id"
+      | "is_auto_generated"
+      | "auto_confidence"
+    >
+  >
+): Promise<void> {
+  const userId = await getUserId();
+  const sourceIds = tests
+    .map((test) => test.source_run_activity_id)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+
+  let deleteQuery = supabase
+    .from("all_out_tests")
+    .delete()
+    .eq("user_id", userId)
+    .eq("is_auto_generated", true);
+
+  if (sourceIds.length > 0) {
+    deleteQuery = deleteQuery.not("source_run_activity_id", "in", `(${sourceIds.map((id) => `"${id}"`).join(",")})`);
+  }
+
+  const { error: deleteError } = await deleteQuery;
+  if (deleteError) throw deleteError;
+
+  if (tests.length === 0) return;
+
+  const { error: upsertError } = await supabase
+    .from("all_out_tests")
+    .upsert(
+      tests.map((test) => ({
+        user_id: userId,
+        date: test.date,
+        kind: test.kind,
+        distance_km: test.distance_km,
+        duration_min: test.duration_min,
+        temp_c: test.temp_c ?? null,
+        source_run_activity_id: test.source_run_activity_id ?? null,
+        is_auto_generated: test.is_auto_generated,
+        auto_confidence: test.auto_confidence ?? null,
+        notes: test.notes ?? null,
+      })),
+      { onConflict: "user_id,source_run_activity_id" }
+    );
+  if (upsertError) throw upsertError;
 }
 
 export async function getRunPredictionModelState(): Promise<RunPredictionModelState | null> {

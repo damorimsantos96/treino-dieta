@@ -8,6 +8,7 @@ import {
   getAllOutTests,
   getRunPredictionModelState,
   replaceValidationLog,
+  syncAutoDetectedAllOutTests,
   upsertRunPredictionModelState,
 } from "@/lib/api";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
@@ -479,6 +480,7 @@ export function FiveKPredictionPanel({
   });
   const persistMutation = useMutation({
     mutationFn: async (payload: ReturnType<typeof buildFiveKPredictionView>["persistence"]) => {
+      await syncAutoDetectedAllOutTests(payload.autoDetectedTests);
       await upsertRunPredictionModelState(payload.modelState);
       await replaceValidationLog(payload.validationLog);
     },
@@ -634,8 +636,21 @@ export function FiveKPredictionPanel({
 
             <View className="flex-row flex-wrap gap-3">
               {[
+                {
+                  label: "Modo",
+                  value:
+                    view.calibration.calibrationMode === "calibrated"
+                      ? "Calibrado"
+                      : view.calibration.calibrationMode === "partial"
+                        ? "Parcial"
+                        : "Default",
+                },
                 { label: "Riegel", value: view.calibration.riegelExp.toFixed(3) },
                 { label: "Ratio", value: view.calibration.ratio.toFixed(4) },
+                {
+                  label: "Blocos 1 km validos",
+                  value: `${view.methodology.repWindowDiagnostics.eligible1k}/${view.methodology.repWindowDiagnostics.totalCandidate1k}`,
+                },
                 { label: "Testes calibráveis", value: `${view.calibration.nTestsUsed}` },
                 {
                   label: "Erro retrospectivo médio",
@@ -660,10 +675,25 @@ export function FiveKPredictionPanel({
 
             <View className="rounded-2xl border px-4 py-3 gap-2" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
               <Text className="text-sm leading-6" style={{ color: TEXT_SOFT }}>
-                {view.calibration.calibrationStatus === "default"
+                {view.calibration.calibrationMode === "default"
                   ? "Usando defaults porque ainda não há ao menos dois testes calibráveis com reps de 1 km na janela."
                   : `Modelo recalibrado até ${view.calibration.lastCalibrationDate ?? "—"} com ${view.calibration.nTestsUsed} testes calibráveis.`}
               </Text>
+              <Text className="text-sm leading-6" style={{ color: TEXT_MUTED }}>
+                Os blocos de 1 km continuam entrando na projecao atual. Na janela:{" "}
+                {view.methodology.repWindowDiagnostics.eligible1k} validos,{" "}
+                {view.methodology.repWindowDiagnostics.rejectedByType} rejeitados por tipagem/intensidade e{" "}
+                {view.methodology.repWindowDiagnostics.rejectedByTemp} sem temperatura.
+              </Text>
+              <Text className="text-sm leading-6" style={{ color: TEXT_MUTED }}>
+                Testes auto-detectados ativos: {view.methodology.repWindowDiagnostics.autoDetectedTests}. Manuais:{" "}
+                {view.calibration.manualTestsUsed}. Automaticos usados na calibracao: {view.calibration.autoTestsUsed}.
+              </Text>
+              {view.calibration.calibrationMode === "partial" ? (
+                <Text className="text-sm leading-6" style={{ color: GOLD }}>
+                  Ajuste parcial: 1 teste confiavel blendado com os defaults para evitar sobreajuste.
+                </Text>
+              ) : null}
               {current.lowConfidence ? (
                 <Text className="text-sm leading-6" style={{ color: CONSERVATIVE }}>
                   Baixa confiança: o indicador atual caiu para `sustain_top3` por falta de reps recentes de 1 km.
