@@ -486,12 +486,31 @@ function workoutKcal(workout: any): number | null {
   return workout.score?.calories ?? workout.calories ?? null;
 }
 
+function firstFiniteNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    if (value == null || value === "") continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
 function workoutAvgHr(workout: any): number | null {
-  return workout.score?.average_heart_rate ??
-    workout.score?.avg_heart_rate ??
-    workout.average_heart_rate ??
-    workout.avg_hr ??
-    null;
+  return firstFiniteNumber(
+    workout.score?.average_heart_rate,
+    workout.score?.avg_heart_rate,
+    workout.score?.averageHeartRate,
+    workout.score?.avgHeartRate,
+    workout.average_heart_rate,
+    workout.avg_heart_rate,
+    workout.averageHeartRate,
+    workout.avgHeartRate,
+    workout.avg_hr,
+    workout.heart_rate?.average,
+    workout.heart_rate?.avg,
+    workout.heartRate?.average,
+    workout.heartRate?.avg,
+  );
 }
 
 function workoutSportId(workout: any): number | null {
@@ -792,7 +811,7 @@ function buildImportMetadata(normalized: NormalizedWorkout, current: unknown = {
     date: normalized.date,
     name: normalized.name,
     sport_id: normalized.sportId,
-    schema_version: 3,
+    schema_version: 4,
     mapping: {
       kcal_field: normalized.mapping.kcalField,
       min_field: normalized.mapping.minField,
@@ -917,12 +936,21 @@ async function repairLegacySaunaImports(supabaseAdmin: any, userId: string, work
       storedMapping.minField === normalized.mapping.minField &&
       storedMapping.bpmField === normalized.mapping.bpmField;
 
-    if (schemaVersion >= 3 && sameMapping) continue;
-
     const storedNorm = isRecord(meta.normalized) ? meta.normalized : null;
     const oldKcal = storedNorm?.kcal != null ? Number(storedNorm.kcal) : null;
     const oldMinutes = storedNorm?.minutes != null ? Number(storedNorm.minutes) : normalized.minutes;
-    const avgHr = storedNorm?.avg_hr != null ? Number(storedNorm.avg_hr) : normalized.avgHr;
+    const storedAvgHr = storedNorm?.avg_hr != null ? Number(storedNorm.avg_hr) : null;
+    const avgHr = storedAvgHr ?? normalized.avgHr;
+    const needsAvgHrRepair =
+      oldMinutes != null &&
+      oldMinutes > 0 &&
+      sameMapping &&
+      storedAvgHr == null &&
+      avgHr != null &&
+      normalized.mapping.bpmField != null &&
+      normalized.mapping.minField != null;
+
+    if (schemaVersion >= 4 && sameMapping && !needsAvgHrRepair) continue;
 
     const { data: existing, error: existingError } = await supabaseAdmin
       .from("daily_logs")
@@ -961,6 +989,18 @@ async function repairLegacySaunaImports(supabaseAdmin: any, userId: string, work
         );
         shouldUpsert = true;
       }
+    }
+
+    if (needsAvgHrRepair && normalized.mapping.bpmField && normalized.mapping.minField) {
+      const currentMinutes = Number(existing?.[normalized.mapping.minField] ?? 0);
+      const baseMinutes = Math.max(0, currentMinutes - oldMinutes);
+      payload[normalized.mapping.bpmField] = mergeBpm(
+        Number(existing?.[normalized.mapping.bpmField] ?? 0) || null,
+        baseMinutes || null,
+        avgHr,
+        oldMinutes
+      );
+      shouldUpsert = true;
     }
 
     if (shouldUpsert) {
