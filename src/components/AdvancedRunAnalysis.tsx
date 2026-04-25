@@ -19,6 +19,9 @@ const CHART_PADDING = { top: 18, right: 20, bottom: 34, left: 44 };
 const CHART_GRID_LINES = 4;
 const CHART_TOOLTIP_WIDTH = 230;
 const CHART_TOOLTIP_HEIGHT = 118;
+const MONTH_TICK_WIDTH = 56;
+const MILESTONE_LABEL_WIDTH = 180;
+const CHART_EDGE_GUTTER = 4;
 const COMP_COLORS = {
   forte: "#facc15",
   moderada: "#86efac",
@@ -58,6 +61,10 @@ function formatPercent(value: number | null | undefined, digits = 1) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function centeredLabelLeft(centerX: number, labelWidth: number, chartWidth: number) {
+  return clamp(centerX - labelWidth / 2, CHART_EDGE_GUTTER, chartWidth - labelWidth - CHART_EDGE_GUTTER);
 }
 
 function scale(value: number, domainMin: number, domainMax: number, rangeMin: number, rangeMax: number) {
@@ -113,6 +120,20 @@ function tooltipPosition(x: number, y: number, chartWidth: number) {
   return {
     x: clamp(x + 12, 8, Math.max(8, chartWidth - CHART_TOOLTIP_WIDTH)),
     y: clamp(y - CHART_TOOLTIP_HEIGHT, 8, CHART_HEIGHT - CHART_TOOLTIP_HEIGHT - 8),
+  };
+}
+
+function milestoneLabelPosition(x: number, y: number, chartWidth: number, plotBottom: number) {
+  const hasRoomOnRight = x + 8 + MILESTONE_LABEL_WIDTH <= chartWidth - CHART_EDGE_GUTTER;
+  const left = hasRoomOnRight
+    ? x + 8
+    : Math.max(CHART_EDGE_GUTTER, x - 8 - MILESTONE_LABEL_WIDTH);
+  const top = clamp(y - 26, CHART_PADDING.top + 4, plotBottom - 28);
+
+  return {
+    left,
+    textAlign: hasRoomOnRight ? ("left" as const) : ("right" as const),
+    top,
   };
 }
 
@@ -277,7 +298,12 @@ function ConditioningChart({
                 />
                 <Text
                   className="absolute text-surface-600 text-[10px]"
-                  style={{ left: x - 24, top: CHART_PADDING.top + plotHeight + 8, width: 56, textAlign: "center" }}
+                  style={{
+                    left: centeredLabelLeft(x, MONTH_TICK_WIDTH, chartWidth),
+                    top: CHART_PADDING.top + plotHeight + 8,
+                    width: MONTH_TICK_WIDTH,
+                    textAlign: "center",
+                  }}
                 >
                   {formatMonthTick(tick.date, includeYear)}
                 </Text>
@@ -730,7 +756,12 @@ function MilestonesChart({
               <Text
                 key={tick.date}
                 className="absolute text-surface-600 text-[10px]"
-                style={{ left: x - 24, top: CHART_PADDING.top + plotHeight + 8, width: 56, textAlign: "center" }}
+                style={{
+                  left: centeredLabelLeft(x, MONTH_TICK_WIDTH, chartWidth),
+                  top: CHART_PADDING.top + plotHeight + 8,
+                  width: MONTH_TICK_WIDTH,
+                  textAlign: "center",
+                }}
               >
                 {formatMonthTick(tick.date, includeYear)}
               </Text>
@@ -783,7 +814,7 @@ function MilestonesChart({
             const x = CHART_PADDING.left + scale(session.daysFromStart, 0, totalDays || 1, 0, plotWidth);
             const y = CHART_PADDING.top + scale(session.milestoneEf, yMin, yMax, plotHeight, 0);
             const color = index === 0 ? "#67e8f9" : "#f87171";
-            const alignRight = x > chartWidth * 0.6;
+            const label = milestoneLabelPosition(x, y, chartWidth, CHART_PADDING.top + plotHeight);
 
             return (
               <View key={milestone.sessionId} pointerEvents="none">
@@ -805,12 +836,11 @@ function MilestonesChart({
                 <Text
                   className="absolute text-xs font-semibold"
                   style={{
-                    left: alignRight ? undefined : x + 8,
-                    right: alignRight ? chartWidth - x + 8 : undefined,
-                    top: y - 26,
+                    left: label.left,
+                    top: label.top,
                     color,
-                    maxWidth: 180,
-                    textAlign: alignRight ? "right" : "left",
+                    width: MILESTONE_LABEL_WIDTH,
+                    textAlign: label.textAlign,
                   }}
                 >
                   {milestone.label}
@@ -818,11 +848,10 @@ function MilestonesChart({
                 <Text
                   className="absolute text-[10px] text-surface-500"
                   style={{
-                    left: alignRight ? undefined : x + 8,
-                    right: alignRight ? chartWidth - x + 8 : undefined,
-                    top: y - 10,
-                    maxWidth: 180,
-                    textAlign: alignRight ? "right" : "left",
+                    left: label.left,
+                    top: label.top + 16,
+                    width: MILESTONE_LABEL_WIDTH,
+                    textAlign: label.textAlign,
                   }}
                 >
                   {milestone.date}
