@@ -42,7 +42,10 @@ function resolveMinimumInterval(settings: AutomationSettings) {
   const intervals: number[] = [];
 
   if (settings.water_reminders_enabled) {
-    intervals.push(Math.max(WATER_REMINDER_MIN_INTERVAL, settings.water_reminder_interval_min));
+    // Keep background checks frequent so Android has more chances to run the
+    // task near the configured reminder cadence. The user-selected interval is
+    // still enforced by lastWaterReminderAt before any notification is sent.
+    intervals.push(WATER_REMINDER_MIN_INTERVAL);
   }
 
   if (settings.health_connect_enabled && settings.health_connect_background_enabled) {
