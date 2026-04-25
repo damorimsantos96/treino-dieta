@@ -704,6 +704,7 @@ export default function AnalisesScreen() {
   const [tableOpen, setTableOpen] = useState(false);
   const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [prsOpen, setPrsOpen] = useState(false);
   const [editingWeight, setEditingWeight] = useState<{ date: string; dateStr: string; weight: string; isNew?: boolean } | null>(null);
   const from = periodToDate(period);
   const now = useMemo(() => new Date(), []);
@@ -1171,8 +1172,19 @@ export default function AnalisesScreen() {
           </Card>
 
           <Card className="gap-4">
-            <SectionLabel label="PRs" />
-            <PRSection embedded />
+            <TouchableOpacity
+              onPress={() => setPrsOpen((current) => !current)}
+              className="flex-row items-center justify-between"
+              activeOpacity={0.85}
+            >
+              <SectionLabel label="PRs" />
+              <Ionicons
+                name={prsOpen ? "chevron-up" : "chevron-down"}
+                size={16}
+                color="#72737f"
+              />
+            </TouchableOpacity>
+            {prsOpen ? <PRSection embedded /> : null}
           </Card>
         </>
       )}
@@ -1241,3 +1253,4 @@ export default function AnalisesScreen() {
     </>
   );
 }
+
