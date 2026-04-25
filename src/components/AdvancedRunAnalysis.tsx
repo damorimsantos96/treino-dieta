@@ -22,6 +22,7 @@ const CHART_TOOLTIP_HEIGHT = 118;
 const MONTH_TICK_WIDTH = 56;
 const MILESTONE_LABEL_WIDTH = 180;
 const CHART_EDGE_GUTTER = 4;
+const ADVANCED_PANEL_HORIZONTAL_PADDING = 32;
 const COMP_COLORS = {
   forte: "#facc15",
   moderada: "#86efac",
@@ -909,7 +910,9 @@ export function AdvancedRunAnalysisSection({
   chartWidth: number;
 }) {
   const analysis = useMemo(() => buildAdvancedRunAnalysis(activities), [activities]);
-  const wideCards = chartWidth >= 900;
+  // `chartWidth` fits the outer Card. Advanced panels add another `p-4` on each side.
+  const panelChartWidth = Math.max(240, chartWidth - ADVANCED_PANEL_HORIZONTAL_PADDING);
+  const wideCards = panelChartWidth >= 900;
 
   if (!analysis) {
     return (
@@ -967,7 +970,7 @@ export function AdvancedRunAnalysisSection({
         title="Evolução do condicionamento aeróbico"
         description="Velocidade de trabalho dividida pela FC normalizada a 22 °C, por sessão. Quanto mais alto, mais eficiente a corrida ficou para o mesmo esforço."
       >
-        <ConditioningChart analysis={analysis} baseWidth={chartWidth} />
+        <ConditioningChart analysis={analysis} baseWidth={panelChartWidth} />
         <TypeLegend analysis={analysis} />
       </AdvancedPanel>
 
@@ -975,18 +978,18 @@ export function AdvancedRunAnalysisSection({
         title="Comparador de sessões"
         description="Selecione uma sessão e veja as cinco mais estruturalmente parecidas em toda a base. O delta de EF_norm fica mais confiável quando a comparabilidade é forte ou moderada."
       >
-        <ComparatorSection analysis={analysis} baseWidth={chartWidth} />
+        <ComparatorSection analysis={analysis} baseWidth={panelChartWidth} />
       </AdvancedPanel>
 
       <AdvancedPanel
         title="Marcos da evolução"
         description="Janela robusta de 20 sessões para marcar o melhor e o pior trecho do histórico. Isso suaviza ruído e destaca mudanças de regime de forma mais honesta."
       >
-        <MilestonesChart analysis={analysis} baseWidth={chartWidth} />
+        <MilestonesChart analysis={analysis} baseWidth={panelChartWidth} />
       </AdvancedPanel>
 
       {/* FiveKPredictionPanel hidden — re-enable when requested */}
-      {false && <FiveKPredictionPanel activities={activities} chartWidth={chartWidth} />}
+      {false && <FiveKPredictionPanel activities={activities} chartWidth={panelChartWidth} />}
     </View>
   );
 }
