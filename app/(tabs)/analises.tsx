@@ -12,15 +12,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addDays,
   addMonths,
-  addWeeks,
-  endOfMonth,
-  endOfWeek,
   format,
   isValid,
   parse,
   parseISO,
-  startOfMonth,
-  startOfWeek,
   subDays,
   subMonths,
   subYears,
@@ -419,70 +414,72 @@ function MultiSparkLine({
   );
 }
 
-type RunBucketMode = "day" | "week" | "month";
-type RunFilter = "week" | "month" | "year";
+type RunBucketMode = "week" | "month";
+type RunFilter = "week" | "month";
 
 const RUN_FILTERS: { key: RunFilter; label: string }[] = [
   { key: "week", label: "Semana" },
   { key: "month", label: "Mês" },
-  { key: "year", label: "Ano" },
 ];
 
-function runFilterFrom(filter: RunFilter): Date {
-  const now = new Date();
-  if (filter === "week") return subDays(now, 7);
-  if (filter === "month") return subMonths(now, 1);
-  return subYears(now, 1);
+function bucketSizeInDays(mode: RunBucketMode) {
+  return mode === "week" ? 7 : 30;
 }
 
-function runFilterTo(filter: RunFilter): Date {
-  return new Date();
+function monthBucketCount(period: Period, totalDays: number) {
+  if (period === "30d") return 1;
+  if (period === "90d") return 3;
+  if (period === "6m") return 6;
+  if (period === "1y") return 12;
+  return Math.min(12, Math.max(1, Math.ceil(totalDays / 30)));
 }
 
 function runBucketMode(filter: RunFilter): RunBucketMode {
-  if (filter === "week") return "day";
-  if (filter === "month") return "week";
-  return "month";
+  return filter;
 }
 
-function bucketStart(date: Date, mode: RunBucketMode): Date {
-  if (mode === "day") return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  if (mode === "week") return startOfWeek(date, { weekStartsOn: 1 });
-  return startOfMonth(date);
-}
-
-function bucketEnd(date: Date, mode: RunBucketMode): Date {
-  if (mode === "day") return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59);
-  if (mode === "week") return endOfWeek(date, { weekStartsOn: 1 });
-  return endOfMonth(date);
-}
-
-function advanceBucket(date: Date, mode: RunBucketMode): Date {
-  if (mode === "day") return addDays(date, 1);
-  if (mode === "week") return addWeeks(date, 1);
-  return addMonths(date, 1);
-}
-
-function buildRunBuckets(activities: RunActivity[], from: Date, to: Date, mode: RunBucketMode) {
+function buildRunBuckets(
+  activities: RunActivity[],
+  from: Date,
+  to: Date,
+  mode: RunBucketMode,
+  period: Period
+) {
   const buckets: { label: string; distance: number; pace: number | null }[] = [];
-  let cursor = bucketStart(from, mode);
+  const normalizedFrom = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  const normalizedTo = new Date(to.getFullYear(), to.getMonth(), to.getDate(), 23, 59, 59, 999);
+  const totalDays = Math.max(1, Math.ceil((normalizedTo.getTime() - normalizedFrom.getTime()) / 86400000));
+  const bucketSize = mode === "week"
+    ? bucketSizeInDays(mode)
+    : Math.max(1, Math.ceil(totalDays / monthBucketCount(period, totalDays)));
+  let cursor = normalizedFrom;
 
-  while (cursor <= to) {
-    const start = bucketStart(cursor, mode);
-    const end = bucketEnd(cursor, mode);
+  while (cursor <= normalizedTo) {
+    const start = cursor;
+    const endCandidate = addDays(cursor, bucketSize - 1);
+    const end = new Date(
+      endCandidate.getFullYear(),
+      endCandidate.getMonth(),
+      endCandidate.getDate(),
+      23,
+      59,
+      59,
+      999
+    );
+    const clampedEnd = end > normalizedTo ? normalizedTo : end;
     const bucketActivities = activities.filter((activity) => {
       const date = parseISO(activity.date);
-      return date >= start && date <= end;
+      return date >= start && date <= clampedEnd;
     });
     const distance = bucketActivities.reduce((sum, activity) => sum + activityDistance(activity), 0);
     const duration = bucketActivities.reduce((sum, activity) => sum + activityDuration(activity), 0);
 
     buckets.push({
-      label: mode === "month" ? format(start, "MM/yy") : format(start, "dd/MM"),
+      label: format(start, "dd/MM"),
       distance,
       pace: distance > 0 && duration > 0 ? duration / distance : null,
     });
-    cursor = advanceBucket(cursor, mode);
+    cursor = addDays(cursor, bucketSize);
   }
 
   return buckets;
@@ -492,20 +489,25 @@ function RunVolumePaceChart({
   activities,
   from,
   to,
-  period,
+  filter,
+  window,
   chartWidth = SCREEN_FALLBACK,
 }: {
   activities: RunActivity[];
   from: Date;
   to: Date;
-  period: RunFilter;
+  filter: RunFilter;
+  window: Period;
   chartWidth?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
   const [tooltip, setTooltip] = useState<{ x: number; y: number } | null>(null);
-  const mode = runBucketMode(period);
-  const data = useMemo(() => buildRunBuckets(activities, from, to, mode), [activities, from, to, mode]);
+  const mode = runBucketMode(filter);
+  const data = useMemo(
+    () => buildRunBuckets(activities, from, to, mode, window),
+    [activities, from, to, mode, window]
+  );
   if (data.length === 0) return null;
 
   const height = 130;
@@ -698,7 +700,7 @@ function StatRow({ label, value, valueColor }: { label: string; value: string; v
 
 export default function AnalisesScreen() {
   const [period, setPeriod] = useState<Period>("90d");
-  const [runFilter, setRunFilter] = useState<RunFilter>("month");
+  const [runFilter, setRunFilter] = useState<RunFilter>("week");
   const [chartWidth, setChartWidth] = useState(SCREEN_FALLBACK);
   const [maVisible, setMaVisible] = useState({ peso: true, mm7: true, mm14: false, mm30: false });
   const [tableOpen, setTableOpen] = useState(false);
@@ -708,8 +710,6 @@ export default function AnalisesScreen() {
   const [editingWeight, setEditingWeight] = useState<{ date: string; dateStr: string; weight: string; isNew?: boolean } | null>(null);
   const from = periodToDate(period);
   const now = useMemo(() => new Date(), []);
-  const runFrom = useMemo(() => runFilterFrom(runFilter), [runFilter]);
-  const runTo = useMemo(() => runFilterTo(runFilter), [runFilter]);
   const qc = useQueryClient();
 
   const { data: logs = [], isLoading: loadingLogs, refetch: refetchLogs } = useQuery({
@@ -720,14 +720,6 @@ export default function AnalisesScreen() {
   const { data: periodRuns = [], isLoading: loadingPeriodRuns, refetch: refetchPeriodRuns } = useQuery({
     queryKey: ["run_activities", period],
     queryFn: () => getRunActivities(from, now, 2000),
-  });
-  const { data: runs = [], isLoading: loadingRuns, refetch: refetchRuns } = useQuery({
-    queryKey: ["run_activities", "analises", runFilter],
-    queryFn: () => getRunActivities(runFrom, runTo, 2000),
-  });
-  const { data: runLogs = [], refetch: refetchRunLogs } = useQuery({
-    queryKey: ["daily_logs", "runs", runFilter],
-    queryFn: () => getDailyLogs(runFrom, runTo),
   });
   const {
     data: advancedRuns = [],
@@ -742,10 +734,8 @@ export default function AnalisesScreen() {
     useCallback(() => {
       refetchLogs();
       refetchPeriodRuns();
-      refetchRuns();
-      refetchRunLogs();
       refetchAdvancedRuns();
-    }, [refetchLogs, refetchPeriodRuns, refetchRuns, refetchRunLogs, refetchAdvancedRuns])
+    }, [refetchLogs, refetchPeriodRuns, refetchAdvancedRuns])
   );
 
   const { mutateAsync: saveWeight, isPending: savingWeight } = useMutation({
@@ -758,10 +748,10 @@ export default function AnalisesScreen() {
   const { mutateAsync: removeRun } = useMutation({ mutationFn: deleteRunActivity });
 
   const userMetrics = useUserMetrics();
-  const isLoading = loadingLogs || loadingPeriodRuns || loadingRuns;
+  const isLoading = loadingLogs || loadingPeriodRuns;
   const runLogsByDate = useMemo(
-    () => Object.fromEntries(runLogs.map((log: DailyLog) => [log.date, log])),
-    [runLogs]
+    () => Object.fromEntries(logs.map((log: DailyLog) => [log.date, log])),
+    [logs]
   );
 
   const weightRows = logs
@@ -805,6 +795,7 @@ export default function AnalisesScreen() {
     ? tdeeData.reduce((sum, item) => sum + item.value, 0) / tdeeData.length
     : 0;
 
+  const runs = periodRuns;
   const totalKm = runs.reduce((sum, activity) => sum + activityDistance(activity), 0);
   const totalRunDuration = runs.reduce((sum, activity) => sum + activityDuration(activity), 0);
   const avgPace = totalKm > 0 && totalRunDuration > 0 ? totalRunDuration / totalKm : 0;
@@ -1077,7 +1068,14 @@ export default function AnalisesScreen() {
             </View>
             {runs.length > 0 ? (
               <>
-                <RunVolumePaceChart activities={runs} from={runFrom} to={runTo} period={runFilter} chartWidth={chartWidth} />
+                <RunVolumePaceChart
+                  activities={runs}
+                  from={from}
+                  to={now}
+                  filter={runFilter}
+                  window={period}
+                  chartWidth={chartWidth}
+                />
                 <StatRow label="Km total" value={`${totalKm.toFixed(1)} km`} valueColor="text-sky-400" />
                 <StatRow label="Corridas" value={`${runs.length}`} />
                 <StatRow label="Pace medio" value={avgPace ? `${formatPace(avgPace)}/km` : "-"} />
