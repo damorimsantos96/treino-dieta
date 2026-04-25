@@ -229,7 +229,9 @@ function ConditioningChart({
   }
 
   const totalDays = analysis.sessions[analysis.sessions.length - 1]?.daysFromStart ?? 0;
-  const chartWidth = Math.max(baseWidth, Math.min(1600, Math.max(baseWidth, totalDays * 1.6, analysis.sessions.length * 16)));
+  const chartWidth = Platform.OS === "web"
+    ? baseWidth
+    : Math.max(baseWidth, Math.min(1600, Math.max(baseWidth, totalDays * 1.6, analysis.sessions.length * 16)));
   const plotWidth = chartWidth - CHART_PADDING.left - CHART_PADDING.right;
   const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom;
   const values = points.map((session) => session.workEfNorm as number);
@@ -684,7 +686,9 @@ function MilestonesChart({
   }
 
   const totalDays = analysis.sessions[analysis.sessions.length - 1]?.daysFromStart ?? 0;
-  const chartWidth = Math.max(baseWidth, Math.min(1600, Math.max(baseWidth, totalDays * 1.6, analysis.sessions.length * 16)));
+  const chartWidth = Platform.OS === "web"
+    ? baseWidth
+    : Math.max(baseWidth, Math.min(1600, Math.max(baseWidth, totalDays * 1.6, analysis.sessions.length * 16)));
   const plotWidth = chartWidth - CHART_PADDING.left - CHART_PADDING.right;
   const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom;
   const values = points.map((session) => session.milestoneEf as number);
