@@ -25,17 +25,18 @@ import {
   subMonths,
   subYears,
 } from "date-fns";
-import { getDailyLogs, getRunActivities, upsertDailyLog } from "@/lib/api";
+import { deleteRunActivity, getDailyLogs, getRunActivities, syncRunSessionsToDaily, upsertDailyLog } from "@/lib/api";
 import { computeDailyCalculations, formatDuration, formatPace } from "@/utils/calculations";
 import { useUserMetrics } from "@/hooks/useUserProfile";
 import { Card, SectionLabel } from "@/components/ui/Card";
 import { Ionicons } from "@expo/vector-icons";
-import { RunActivity } from "@/types";
+import { DailyLog, RunActivity } from "@/types";
 import { BottomSheetModal } from "@/components/ui/BottomSheetModal";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
 import { useFocusEffect } from "expo-router";
 import { AdvancedRunAnalysisSection } from "@/components/AdvancedRunAnalysis";
 import { PRSection } from "@/components/PRSection";
+import { RunHistorySection } from "@/components/RunHistorySection";
 
 const SCREEN_FALLBACK = 320;
 const CHART_LEFT = 36;
@@ -419,11 +420,29 @@ function MultiSparkLine({
 }
 
 type RunBucketMode = "day" | "week" | "month";
+type RunFilter = "week" | "month" | "year";
 
-function runBucketMode(period: Period): RunBucketMode {
-  if (period === "30d") return "day";
-  if (period === "1y" || period === "max") return "month";
-  return "week";
+const RUN_FILTERS: { key: RunFilter; label: string }[] = [
+  { key: "week", label: "Semana" },
+  { key: "month", label: "Mês" },
+  { key: "year", label: "Ano" },
+];
+
+function runFilterFrom(filter: RunFilter): Date {
+  const now = new Date();
+  if (filter === "week") return subDays(now, 7);
+  if (filter === "month") return subMonths(now, 1);
+  return subYears(now, 1);
+}
+
+function runFilterTo(filter: RunFilter): Date {
+  return new Date();
+}
+
+function runBucketMode(filter: RunFilter): RunBucketMode {
+  if (filter === "week") return "day";
+  if (filter === "month") return "week";
+  return "month";
 }
 
 function bucketStart(date: Date, mode: RunBucketMode): Date {
@@ -479,7 +498,7 @@ function RunVolumePaceChart({
   activities: RunActivity[];
   from: Date;
   to: Date;
-  period: Period;
+  period: RunFilter;
   chartWidth?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
@@ -679,13 +698,17 @@ function StatRow({ label, value, valueColor }: { label: string; value: string; v
 
 export default function AnalisesScreen() {
   const [period, setPeriod] = useState<Period>("90d");
+  const [runFilter, setRunFilter] = useState<RunFilter>("month");
   const [chartWidth, setChartWidth] = useState(SCREEN_FALLBACK);
   const [maVisible, setMaVisible] = useState({ peso: true, mm7: true, mm14: false, mm30: false });
   const [tableOpen, setTableOpen] = useState(false);
+  const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [editingWeight, setEditingWeight] = useState<{ date: string; dateStr: string; weight: string; isNew?: boolean } | null>(null);
   const from = periodToDate(period);
   const now = useMemo(() => new Date(), []);
+  const runFrom = useMemo(() => runFilterFrom(runFilter), [runFilter]);
+  const runTo = useMemo(() => runFilterTo(runFilter), [runFilter]);
   const qc = useQueryClient();
 
   const { data: logs = [], isLoading: loadingLogs, refetch: refetchLogs } = useQuery({
@@ -693,9 +716,17 @@ export default function AnalisesScreen() {
     queryFn: () => getDailyLogs(from, now),
   });
 
-  const { data: runs = [], isLoading: loadingRuns, refetch: refetchRuns } = useQuery({
+  const { data: periodRuns = [], isLoading: loadingPeriodRuns, refetch: refetchPeriodRuns } = useQuery({
     queryKey: ["run_activities", period],
     queryFn: () => getRunActivities(from, now, 2000),
+  });
+  const { data: runs = [], isLoading: loadingRuns, refetch: refetchRuns } = useQuery({
+    queryKey: ["run_activities", "analises", runFilter],
+    queryFn: () => getRunActivities(runFrom, runTo, 2000),
+  });
+  const { data: runLogs = [], refetch: refetchRunLogs } = useQuery({
+    queryKey: ["daily_logs", "runs", runFilter],
+    queryFn: () => getDailyLogs(runFrom, runTo),
   });
   const {
     data: advancedRuns = [],
@@ -709,9 +740,11 @@ export default function AnalisesScreen() {
   useFocusEffect(
     useCallback(() => {
       refetchLogs();
+      refetchPeriodRuns();
       refetchRuns();
+      refetchRunLogs();
       refetchAdvancedRuns();
-    }, [refetchLogs, refetchRuns, refetchAdvancedRuns])
+    }, [refetchLogs, refetchPeriodRuns, refetchRuns, refetchRunLogs, refetchAdvancedRuns])
   );
 
   const { mutateAsync: saveWeight, isPending: savingWeight } = useMutation({
@@ -721,9 +754,14 @@ export default function AnalisesScreen() {
       qc.invalidateQueries({ queryKey: ["daily_log", data.date] });
     },
   });
+  const { mutateAsync: removeRun } = useMutation({ mutationFn: deleteRunActivity });
 
   const userMetrics = useUserMetrics();
-  const isLoading = loadingLogs || loadingRuns;
+  const isLoading = loadingLogs || loadingPeriodRuns || loadingRuns;
+  const runLogsByDate = useMemo(
+    () => Object.fromEntries(runLogs.map((log: DailyLog) => [log.date, log])),
+    [runLogs]
+  );
 
   const weightRows = logs
     .filter((log) => log.weight_kg)
@@ -769,7 +807,7 @@ export default function AnalisesScreen() {
   const totalKm = runs.reduce((sum, activity) => sum + activityDistance(activity), 0);
   const totalRunDuration = runs.reduce((sum, activity) => sum + activityDuration(activity), 0);
   const avgPace = totalKm > 0 && totalRunDuration > 0 ? totalRunDuration / totalKm : 0;
-  const runDays = new Set(runs.map((activity) => activity.date)).size;
+  const totalRunDurationInPeriod = periodRuns.reduce((sum, activity) => sum + activityDuration(activity), 0);
   const avgRunHr = (() => {
     let weighted = 0;
     let duration = 0;
@@ -782,7 +820,7 @@ export default function AnalisesScreen() {
     return duration > 0 ? Math.round(weighted / duration) : null;
   })();
 
-  const runDateSet = new Set(runs.map((activity) => activity.date));
+  const runDateSet = new Set(periodRuns.map((activity) => activity.date));
   const trainingDays = new Set(
     logs
       .filter((log) => {
@@ -795,6 +833,21 @@ export default function AnalisesScreen() {
       .map((log) => log.date)
       .concat(Array.from(runDateSet))
   ).size;
+
+  async function handleDeleteRun(id: string, date: string) {
+    try {
+      await removeRun(id);
+      await syncRunSessionsToDaily(date);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["run_activities"] }),
+        qc.invalidateQueries({ queryKey: ["run_sessions"] }),
+        qc.invalidateQueries({ queryKey: ["daily_log"] }),
+        qc.invalidateQueries({ queryKey: ["daily_logs"] }),
+      ]);
+    } catch (err: unknown) {
+      Alert.alert("Erro", err instanceof Error ? err.message : "Nao foi possivel excluir.");
+    }
+  }
 
   function toggleMa(key: keyof typeof maVisible) {
     setMaVisible((current) => {
@@ -1005,9 +1058,25 @@ export default function AnalisesScreen() {
 
           <Card className="gap-4">
             <SectionLabel label="Corridas" />
+            <View className="flex-row gap-2">
+              {RUN_FILTERS.map(({ key, label }) => {
+                const active = runFilter === key;
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => setRunFilter(key)}
+                    className={`rounded-xl border px-3 py-2 ${active ? "border-brand-500 bg-brand-500/15" : "border-surface-700/60 bg-surface-800/70"}`}
+                  >
+                    <Text className={`text-xs font-bold ${active ? "text-brand-400" : "text-surface-500"}`}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
             {runs.length > 0 ? (
               <>
-                <RunVolumePaceChart activities={runs} from={from} to={now} period={period} chartWidth={chartWidth} />
+                <RunVolumePaceChart activities={runs} from={runFrom} to={runTo} period={runFilter} chartWidth={chartWidth} />
                 <StatRow label="Km total" value={`${totalKm.toFixed(1)} km`} valueColor="text-sky-400" />
                 <StatRow label="Corridas" value={`${runs.length}`} />
                 <StatRow label="Pace medio" value={avgPace ? `${formatPace(avgPace)}/km` : "-"} />
@@ -1016,6 +1085,13 @@ export default function AnalisesScreen() {
             ) : (
               <Text className="text-surface-500 text-sm">Sem corridas neste periodo.</Text>
             )}
+            <RunHistorySection
+              activities={runs}
+              logsByDate={runLogsByDate}
+              open={runHistoryOpen}
+              onToggle={() => setRunHistoryOpen((current) => !current)}
+              onDelete={handleDeleteRun}
+            />
             {advancedRuns.length > 0 ? (
               <View className="pt-2 gap-3">
                 <TouchableOpacity
@@ -1063,7 +1139,7 @@ export default function AnalisesScreen() {
                     0
                   ),
                 }))
-                .concat([{ label: "Corrida", key: "run_activities", color: "#3b82f6", total: totalRunDuration }])
+                .concat([{ label: "Corrida", key: "run_activities", color: "#3b82f6", total: totalRunDurationInPeriod }])
                 .filter((activity) => activity.total > 0);
 
               if (byActivity.length === 0) {
