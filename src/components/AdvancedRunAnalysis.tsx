@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { RunActivity } from "@/types";
@@ -242,7 +242,7 @@ function ConditioningChart({
 
   return (
     <View className="gap-4">
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <ScrollView horizontal={Platform.OS !== "web"} showsHorizontalScrollIndicator={false}>
         <View style={{ width: chartWidth, height: CHART_HEIGHT }}>
           {Array.from({ length: CHART_GRID_LINES }).map((_, index) => {
             const ratio = index / (CHART_GRID_LINES - 1);
@@ -697,7 +697,7 @@ function MilestonesChart({
 
   return (
     <View className="gap-4">
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <ScrollView horizontal={Platform.OS !== "web"} showsHorizontalScrollIndicator={false}>
         <View style={{ width: chartWidth, height: CHART_HEIGHT }}>
           {Array.from({ length: CHART_GRID_LINES }).map((_, index) => {
             const ratio = index / (CHART_GRID_LINES - 1);
