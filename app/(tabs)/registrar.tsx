@@ -418,12 +418,13 @@ export default function RegistrarScreen() {
   return (
     <KeyboardAvoidingView
       className="flex-1 bg-surface-900"
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <ScrollView
         className="flex-1"
         contentContainerClassName="px-4 pt-6 pb-10 gap-4"
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       >
         {/* Header */}
         <View className="flex-row justify-between items-end">
