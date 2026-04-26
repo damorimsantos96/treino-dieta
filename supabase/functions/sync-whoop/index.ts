@@ -523,6 +523,15 @@ const AVG_HR_KEYS = new Set([
   "average_hr",
   "avg_hr",
   "heart_rate_average",
+  "heart_rate_avg",
+  "heartRateAverage",
+  "heartRateAvg",
+  "mean_heart_rate",
+  "heart_rate_mean",
+  "average_hr_bpm",
+  "avg_hr_bpm",
+  "averageHeartRateBpm",
+  "avgHeartRateBpm",
   "average_bpm",
   "avg_bpm",
 ]);
@@ -642,7 +651,31 @@ function workoutAvgHr(workout: any): number | null {
 }
 
 async function fetchWorkoutById(token: string, id: string) {
-  return whoopGet(token, `/activity/workout/${id}`);
+  const payload = await whoopGet(token, `/activity/workout/${id}`);
+  return unwrapWorkoutPayload(payload);
+}
+
+function unwrapWorkoutPayload(payload: any): any {
+  if (Array.isArray(payload)) {
+    return payload[0] ?? null;
+  }
+  if (!isRecord(payload)) {
+    return payload;
+  }
+
+  const nestedCandidates = [
+    payload.record,
+    payload.workout,
+    payload.activity,
+    payload.data,
+  ];
+  for (const candidate of nestedCandidates) {
+    if (candidate && !Array.isArray(candidate)) return candidate;
+  }
+
+  if (Array.isArray(payload.records)) return payload.records[0] ?? null;
+  if (Array.isArray(payload.data)) return payload.data[0] ?? null;
+  return payload;
 }
 
 async function hydrateWorkoutsWithMissingSaunaAvgHr(accessToken: string, workouts: any[]) {
